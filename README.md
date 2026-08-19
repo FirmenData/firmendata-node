@@ -155,6 +155,7 @@ npm run build
 - Python SDK — <https://github.com/FirmenData/firmendata-python>
 - n8n node — <https://github.com/FirmenData/n8n-nodes-firmendata>
 - MCP server (for AI agents) — `https://mcp.firmendata.com/mcp`
+- Website — <https://firmendata.com>
 
 ## License
 
