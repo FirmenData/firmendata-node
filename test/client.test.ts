@@ -236,13 +236,15 @@ describe('retry policy', () => {
         calls += 1;
         return calls === 1
           ? jsonResponse(500, problem('server-error', 500))
-          : jsonResponse(200, { data: [{ name: 'SAP SE' }] });
+          : jsonResponse(200, { data: [{ display_name: 'SAP SE' }] });
       },
       { maxRetries: 2 },
     );
     const result = await client.autocomplete('sap');
     expect(calls).toBe(2);
-    expect((result as { data: Array<{ name: string }> }).data[0]!.name).toBe('SAP SE');
+    // `data` is optional in the contract (the response schemas declare no
+    // required fields), so the generated type makes callers check it.
+    expect(result.data?.[0]?.display_name).toBe('SAP SE');
   });
 
   it('gives up and throws the last error', async () => {
