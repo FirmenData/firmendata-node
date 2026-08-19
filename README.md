@@ -1,15 +1,15 @@
-# @firmendata/sdk
+# firmendata
 
 Official TypeScript/JavaScript client for the [firmendata](https://firmendata.com)
 API — data on **2.4 million German companies** from the Unternehmensregister and
 Handelsregister: register profiles, parsed annual financial statements,
 shareholder cap tables, UBO chains, insolvency notices and public-tender links.
 
-[![npm](https://img.shields.io/npm/v/@firmendata/sdk)](https://www.npmjs.com/package/@firmendata/sdk)
+[![npm](https://img.shields.io/npm/v/firmendata)](https://www.npmjs.com/package/firmendata)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```bash
-npm install @firmendata/sdk
+npm install firmendata
 ```
 
 **Zero runtime dependencies.** Built on the platform `fetch`, so it runs
@@ -21,7 +21,7 @@ adds nothing to your dependency tree.
 Company-name autocomplete is free and needs **no API key**:
 
 ```ts
-import { FirmenData } from '@firmendata/sdk';
+import { FirmenData } from 'firmendata';
 
 const fd = new FirmenData();
 const { data } = await fd.autocomplete('siemens');
@@ -74,7 +74,7 @@ Every failure is a typed error carrying the API's RFC 7807 problem detail,
 including a `requestId` you can quote to support.
 
 ```ts
-import { InsufficientCreditsError, RateLimitError } from '@firmendata/sdk';
+import { InsufficientCreditsError, RateLimitError } from 'firmendata';
 
 try {
   await fd.getUbo(euId);

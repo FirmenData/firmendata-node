@@ -1,0 +1,90 @@
+# Publishes to npm on a version tag, with a provenance attestation.
+#
+# ─── AUTHENTICATION: read this before the first release ────────────────────
+#
+# npm cannot attach a trusted publisher to a package that does not exist yet
+# (npm/cli#8544). PyPI can; npm cannot. So this takes two steps:
+#
+#   FIRST RELEASE — set an NPM_TOKEN secret:
+#     npmjs.com → Access Tokens → Generate → Granular Access Token, scoped to
+#     the `firmendata` package with read+write. Add it as the repo secret
+#     NPM_TOKEN. The step below picks it up automatically.
+#
+#   AFTER THAT — switch to OIDC and delete the token:
+#     npmjs.com → the package → Settings → Trusted Publisher → GitHub Actions
+#       Organization/user: FirmenData
+#       Repository:        firmendata-node
+#       Workflow filename: publish.yml
+#       Environment:       npm
+#     Then delete the NPM_TOKEN secret. The step is written so that removing
+#     the secret is the only action required — with no token present, npm
+#     falls back to the OIDC exchange.
+#
+# Provenance is signed by GitHub's OIDC infrastructure either way, so the
+# first release is attested too. `id-token: write` below is what makes that
+# possible and is not optional.
+#
+# ─── RELEASING ─────────────────────────────────────────────────────────────
+#
+#   1. bump "version" in package.json
+#   2. commit, then:  git tag 0.1.0 && git push origin 0.1.0
+#
+# A published version can never be reused, even after `npm unpublish`.
+
+name: Publish
+
+on:
+  push:
+    tags: ['*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      # Mints the OIDC token used for provenance, and for trusted publishing
+      # once that is configured.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22 ships an npm new enough for both provenance and the OIDC
+          # exchange (npm >= 11.5.1 is required for trusted publishing).
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run lint
+
+      # The committed types must match the vendored contract, or we ship an
+      # SDK that misdescribes the API.
+      - run: npm run generate
+      - run: git diff --exit-code -- src/schema.ts
+
+      - name: Tag must match the package version
+        if: github.event_name == 'push'
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $TAG does not match package.json version $PKG"
+            exit 1
+          fi
+
+      - run: npm run build
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          # Present for the first release, absent afterwards — npm uses the
+          # OIDC exchange when this is empty.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
