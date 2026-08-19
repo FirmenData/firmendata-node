@@ -27,7 +27,7 @@ const fd = new FirmenData();
 const { data } = await fd.autocomplete('siemens');
 
 for (const hit of data) {
-  console.log(hit.eu_id, hit.name);
+  console.log(hit.eu_id, hit.display_name);
 }
 ```
 
