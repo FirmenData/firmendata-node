@@ -1,5 +1,5 @@
 {
-  "name": "@firmendata/sdk",
+  "name": "firmendata",
   "version": "0.1.0",
   "description": "Official TypeScript/JavaScript client for the firmendata German company-data API",
   "license": "MIT",

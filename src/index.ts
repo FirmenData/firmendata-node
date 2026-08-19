@@ -5,7 +5,7 @@
  * Autocomplete is free and needs no API key:
  *
  * ```ts
- * import { FirmenData } from '@firmendata/sdk';
+ * import { FirmenData } from 'firmendata';
  *
  * const fd = new FirmenData();
  * const { data } = await fd.autocomplete('siemens');
