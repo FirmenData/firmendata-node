@@ -31,9 +31,10 @@ for (const hit of data) {
 }
 ```
 
-Keyless calls are limited to 1 request/second, 30/minute and 1000/day per IP.
-Add a key and you get the standard account limits (5/s, 100/min) plus every
-other endpoint.
+Keyless calls are rate limited, modestly and by address — enough to try the
+API, back a search box, or run low-volume queries. Add a key for substantially
+higher limits plus every other endpoint. On a `429`, honour `Retry-After`; the
+client already does this for you.
 
 ## With an API key
 
