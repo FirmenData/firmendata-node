@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  # The package advertises zero runtime dependencies — that is what makes it
+  # usable in edge runtimes and what keeps it out of consumers' dependency
+  # trees. Assert it rather than trust it.
+  no-runtime-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: package.json declares no dependencies
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const deps = Object.keys(p.dependencies ?? {});
+            if (deps.length) {
+              console.error('::error::Runtime dependencies added: ' + deps.join(', '));
+              process.exit(1);
+            }
+            console.log('No runtime dependencies. Good.');
+          "
+
+  # src/schema.ts is generated from the vendored contract. If the committed
+  # copy differs from what the contract produces, the SDK's types are lying
+  # about the API.
+  generated-types-are-current:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run generate
+      - name: Types match the vendored contract
+        run: |
+          if ! git diff --exit-code -- src/schema.ts; then
+            echo "::error::src/schema.ts is stale. Run 'npm run generate' and commit."
+            exit 1
+          fi
+
+  # Advisory only: the SDK targets the spec it vendors, so upstream moving on
+  # is a signal to cut a release, not a reason to fail the build.
+  upstream-drift:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare vendored spec against production
+        run: |
+          curl -sSL https://api.firmendata.com/v1/openapi.json -o /tmp/live.json
+          node -e "
+            const live = require('/tmp/live.json');
+            const vendored = require('./contracts/openapi.v1.json');
+            const lp = Object.keys(live.paths).sort();
+            const vp = Object.keys(vendored.paths).sort();
+            const added = lp.filter(p => !vp.includes(p));
+            const removed = vp.filter(p => !lp.includes(p));
+            if (added.length || removed.length) {
+              console.log('::warning::Vendored spec is out of date. added=' +
+                JSON.stringify(added) + ' removed=' + JSON.stringify(removed));
+            } else {
+              console.log('Vendored spec matches production paths.');
+            }
+          "
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
