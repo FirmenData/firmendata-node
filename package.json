@@ -1,0 +1,68 @@
+{
+  "name": "@firmendata/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript/JavaScript client for the firmendata German company-data API",
+  "license": "MIT",
+  "author": "FirmenData <info@firmendata.com>",
+  "homepage": "https://firmendata.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FirmenData/firmendata-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FirmenData/firmendata-node/issues"
+  },
+  "keywords": [
+    "firmendata",
+    "germany",
+    "company-data",
+    "handelsregister",
+    "unternehmensregister",
+    "company-register",
+    "kyc",
+    "ubo",
+    "api-client"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "generate": "openapi-typescript contracts/openapi.v1.json -o src/schema.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/node": "^22.8.0",
+    "eslint": "^9.13.0",
+    "openapi-typescript": "^7.4.0",
+    "prettier": "^3.3.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.11.0",
+    "vitest": "^2.1.0"
+  }
+}
