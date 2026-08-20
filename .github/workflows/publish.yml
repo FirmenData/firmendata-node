@@ -60,7 +60,12 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
-      - run: npm ci
+      # --ignore-scripts: this job can mint an OIDC token that npm accepts
+      # for publishing, so no dependency's lifecycle script gets to run in
+      # it. esbuild & co. resolve their binaries via optionalDependencies,
+      # so nothing here needs install scripts — verified by CI, which
+      # installs the same way.
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
       - run: npm run lint
