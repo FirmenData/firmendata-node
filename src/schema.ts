@@ -42,45 +42,22 @@ export interface paths {
         };
         /**
          * Advanced search
-         * @description Full-text + filter search over the German commercial register. Cursor-paginated, up to 50 hits per page. `total_approx` caps at 10,000 — tighten filters for an exact count. Each hit carries:
+         * @description Full-text + filter search over the German commercial register. Cursor-paginated,
+         *     up to 50 hits per page. `total_approx` caps at 10,000 — tighten filters for an
+         *     exact count.
          *
-         *     - **Identity & seat** — display name, registered address, Bundesland, founding date
-         *     - **Register reference** — court, register type, number
-         *     - **Headline financials** — latest reported revenue, profit and balance-sheet total (EUR), plus latest reported employee count
-         *     - **Web presence** — website
-         *     - **Public procurement** — CPV codes from awarded EU tenders
+         *     Each hit carries identity and registered seat, the register reference (court,
+         *     type, number), headline financials in EUR, the company's website, and the CPV
+         *     codes of any EU tenders it won.
          *
-         *     **Reading the financials**
+         *     Filter values are case-insensitive, several filters accept multiple values, and
+         *     the financial figures need one caveat before you compute ratios with them — see
+         *     the **Search** section above for all three.
          *
-         *     Each figure is resolved to the most recent filing that actually carries it, so
-         *     they can come from *different* fiscal years — `revenue_year`, `profit_year`,
-         *     `total_assets_year` and `employee_count_year` say which. Don't assume two of
-         *     them share a year when computing a ratio. `financial_year` is a separate thing:
-         *     the latest year the company filed anything at all.
-         *
-         *     Coverage differs sharply between the metrics, and it is not a data-quality
-         *     gap — most German filers publish a balance sheet without a full P&L. Revenue is
-         *     on file for ~3% of the register, profit ~26%, **balance-sheet total ~35%**. If
-         *     you are filtering on company size, `total_assets_min` / `total_assets_max`
-         *     reaches an order of magnitude more companies than the revenue bounds.
-         *
-         *     **Industry filters**
-         *
-         *     - `wz_2025_code` — WZ 2025 at any level: section letter (`J`), division (`62`), group (`62.0`), class (`62.01`), or national subclass (`62.01.9`). OR-matched against the company's primary code and all five parent levels.
-         *     - `industry_slug` — high-level firmendata category (e.g. `technology`, `healthcare`, `automotive`). Expands server-side to WZ divisions and OR-merges with any explicit `wz_2025_code`.
-         *
-         *     **Realtime discovery (`fetch_realtime=true`)**
-         *
-         *     Additionally searches the German company registers live for the keyword (`q` or `company_name` — required with the flag) and indexes any companies not yet known to firmendata — this is how a company founded days ago can be found before the regular register sweep reaches it. Companies missing from the search index are appended to the first page as extra hits carrying identity, register reference and seat only; their register documents and financial publications are fetched in the background right afterwards, so the full profile fills in shortly. First page only (no `cursor`).
-         *
-         *     **Location filters**
-         *
-         *     - `city` and `bundesland` are OR-merged into one location filter: a company matches when its registered seat is in **any** selected city or **any** selected federal state. Repeat either parameter for multiple values.
-         *
-         *     **Public-procurement filters**
-         *
-         *     - `cpv_code` — CPV prefix from the notices a company *won*, e.g. `45` for all construction contracts.
-         *     - `tender_role` — whether the company appears in TED as a `winner` (awarded a contract) or a `buyer` (contracting authority). The two overlap and together cover ~1% of the register, so unlike `legal_status`, selecting both values is a filter rather than a no-op. Coverage starts 2025-01-02.
+         *     Setting `fetch_realtime=true` additionally searches the German registers live
+         *     for `q` (or `company_name`, one of which is then required) and appends any
+         *     companies not yet indexed by firmendata to the first page, carrying identity and
+         *     seat only. First page only — omit `cursor`.
          *
          *
          *     ## Pricing
@@ -2439,7 +2416,7 @@ export interface components {
          * Rechtsform
          * @enum {string}
          */
-        Rechtsform: "GmbH" | "KG" | "e.K.; e.Kfm.; e.Kfr." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "AG" | "eG" | "ausl. Rechtsform" | "Rechtsform ausländischen Rechts HRB" | "e.V." | "gGmbH" | "UG & Co. KG" | "SE" | "EWIV" | "KGaA" | "sonst. juristische Person, d. im HRA eingetragen ist" | "VVaG" | "SCE";
+        Rechtsform: "GmbH" | "KG" | "e.K." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "e.V." | "AG" | "eG" | "ausländische Rechtsform (HRB)" | "gGmbH" | "UG & Co. KG" | "ausländische Rechtsform" | "SE" | "sonstige juristische Person" | "EWIV" | "KGaA" | "Ltd. & Co. KG" | "sonstige juristische Person (HRA)" | "GmbH & Co. OHG" | "VVaG" | "SE & Co. KG" | "ausländische Rechtsform (HRA)" | "AG & Co. KG" | "ausländische Rechtsform (PR)" | "SCE" | "ausländische Rechtsform (GnR)" | "Stiftung & Co. KG" | "eG & Co. KG";
         /**
          * RegisterCourt
          * @enum {string}
@@ -2654,7 +2631,7 @@ export interface components {
             register_type?: string | null;
             /**
              * Revenue
-             * @description Most recently reported annual revenue in EUR (Umsatzerlöse). The fiscal year it is for is `revenue_year`. Null when the company has never disclosed one — which is the common case, not an edge case: most German filers publish a balance sheet without a full P&L, so revenue is on file for roughly 3% of the register. Use `total_assets` for a size measure with far broader coverage.
+             * @description Most recently reported annual revenue in EUR (Umsatzerlöse). The fiscal year it is for is `revenue_year`. Null when the company has never disclosed one — which is the common case, not an edge case: small and medium-sized filers publish abridged accounts with no profit-and-loss statement. Use `total_assets` for a size measure with far broader coverage.
              */
             revenue?: number | null;
             /**
@@ -2664,7 +2641,7 @@ export interface components {
             revenue_year?: number | null;
             /**
              * Total Assets
-             * @description Balance-sheet total (Bilanzsumme) in EUR, from the most recent filing that reports one. Present for ~35% of the register against revenue's ~3%, which makes it the most widely available measure of company size.
+             * @description Balance-sheet total (Bilanzsumme) in EUR, from the most recent filing that reports one. Every filing company publishes a balance sheet — abridged accounts omit the profit-and-loss statement but not this — which makes it the most widely available measure of company size.
              */
             total_assets?: number | null;
             /**
@@ -2839,9 +2816,15 @@ export interface components {
         };
         /**
          * Sort
+         * @description How to order search results.
+         *
+         *     Companies missing the value always sort last, whichever direction is
+         *     chosen. `total_assets` ranks the most companies of the size measures:
+         *     every filing company publishes a balance sheet, where only a minority
+         *     publish a full profit-and-loss statement.
          * @enum {string}
          */
-        Sort: "name" | "city" | "bundesland" | "industry" | "revenue" | "profit" | "employee_count" | "cpv";
+        Sort: "name" | "revenue" | "profit" | "total_assets" | "employee_count";
         /**
          * SortDirection
          * @enum {string}
@@ -3526,10 +3509,10 @@ export interface components {
          * TenderRole
          * @description Which side of an EU public-procurement notice a company was on.
          *
-         *     Overlapping, not exhaustive — a company can be both (277 are), and ~99%
-         *     of the register is neither. Selecting both values therefore means "appears
-         *     in TED at all" and is a genuine filter, where selecting every
-         *     :class:`LegalStatus` is a no-op.
+         *     Overlapping, not exhaustive — a company can be both, and the large
+         *     majority of the register is neither. Selecting both values therefore
+         *     means "appears in TED at all" and is a genuine filter, where selecting
+         *     every :class:`LegalStatus` is a no-op.
          * @enum {string}
          */
         TenderRole: "winner" | "buyer";
@@ -3977,9 +3960,9 @@ export interface operations {
     searchCompanies: {
         parameters: {
             query?: {
-                /** @description Unified keyword. Tried in three phases, falling through when a phase returns zero hits: (1) if `q` parses as a German eu_id, exact eu_id lookup; (2) company-name prefix match; (3) person-name match. Takes priority over `company_name`, `eu_id` and `person_name` if any are also supplied. Minimum 3 characters. */
+                /** @description Unified keyword, tried as an eu_id, then a company-name prefix, then a person name — falling through whenever a phase returns nothing. Overrides `company_name`, `eu_id` and `person_name` when supplied alongside them. */
                 q?: string | null;
-                /** @description Company name fragment. Prefix-matched against the folded legal name with quote / invisible characters stripped, so `Müller "Süd" GmbH` and `Müller Süd GmbH` match the same row. The Rechtsform suffix is kept, so `Bosch GmbH` narrows results compared to `Bosch`. Minimum 3 characters. */
+                /** @description Company name prefix, matched against the folded legal name with quotes and invisible characters stripped — `Müller "Süd" GmbH` and `Müller Süd GmbH` hit the same row. The legal-form suffix is kept, so `Bosch GmbH` narrows against `Bosch`. */
                 company_name?: string | null;
                 /** @description Exact eu_id lookup (no prefix expansion). */
                 eu_id?: string | null;
@@ -3987,87 +3970,97 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque pagination cursor. Pass the `pagination.next_cursor` from a previous response to fetch the next page. */
                 cursor?: string | null;
-                /** @description Field to sort by. Defaults to keyword-match relevance when `q` is provided; otherwise sorts by `revenue` descending. */
+                /** @description Field to order results by. Defaults to keyword-match relevance when `q` is given, otherwise `revenue` descending. Companies missing the value always sort last, whichever direction is chosen. `total_assets` ranks far more companies than `revenue` does — see the filter notes on those two. */
                 sort?: components["schemas"]["Sort"] | null;
                 /** @description Sort direction. Defaults to `desc`. */
                 sort_direction?: components["schemas"]["SortDirection"] | null;
-                /** @description Filter by exact register number / Registernummer (e.g. `12345` for HRB 12345). Digits only — use `register_type` to narrow by register kind. */
+                /** @description Exact Registernummer, digits only (`12345` for HRB 12345). Register numbers repeat across courts and types — combine with `register_court` / `register_type` to identify one company. */
                 register_number?: number | null;
-                /** @description Filter by register type. */
+                /** @description Register type. Single-valued. */
                 register_type?: components["schemas"]["RegisterType"] | null;
-                /** @description Filter by registering court (Registergericht). Enum values are the canonical court names from the German Handelsregister. */
+                /** @description Registering court (Registergericht), by its canonical Handelsregister name. An `Amtsgericht ` prefix is accepted and ignored. Single-valued. Ten listed courts were consolidated away years ago and hold no companies — they stay valid inputs so existing calls keep working. */
                 register_court?: components["schemas"]["RegisterCourt"] | null;
-                /** @description Filter by registered seat city (exact match, umlaut-insensitive via `de_fold`). Repeat the parameter for multiple values (OR-combined). OR-merged with `bundesland`: a company matches when it is in any selected city or any selected federal state. */
+                /** @description Registered seat city, matched exactly but umlaut-insensitively. Multi-valued, and OR-merged with `bundesland` into one location filter. */
                 city?: string[] | null;
-                /** @description Filter by one or more German federal states. Repeat the parameter for multiple values (OR-combined). OR-merged with `city` — see there. */
+                /** @description German federal state. Multi-valued; also accepts postal codes (`BY`, `NRW`) and English names (`Bavaria`). */
                 bundesland?: components["schemas"]["Bundesland"][] | null;
                 /** @description Earliest founding date (inclusive, `YYYY-MM-DD`). */
                 founded_from?: string | null;
                 /** @description Latest founding date (inclusive, `YYYY-MM-DD`). */
                 founded_to?: string | null;
-                /** @description Minimum latest reported revenue in EUR (inclusive). Companies with no revenue on file never match a revenue bound — most German filers publish a balance sheet without a full P&L, so absence of a figure is the common case rather than a small one. */
+                /** @description Minimum latest reported revenue in EUR, inclusive. Most German companies file abridged accounts with no profit-and-loss statement, so revenue is the scarcest financial figure — prefer `total_assets_min` to filter on size. */
                 revenue_min?: number | null;
-                /** @description Maximum latest reported revenue in EUR (inclusive). Companies with no revenue on file never match. */
+                /** @description Maximum latest reported revenue in EUR, inclusive. */
                 revenue_max?: number | null;
-                /** @description Minimum latest reported profit in EUR (inclusive). Companies with no profit on file never match. */
+                /** @description Minimum latest reported profit in EUR, inclusive. */
                 profit_min?: number | null;
-                /** @description Maximum latest reported profit in EUR (inclusive). Companies with no profit on file never match. */
+                /** @description Maximum latest reported profit in EUR, inclusive. */
                 profit_max?: number | null;
-                /** @description Minimum balance-sheet total (Bilanzsumme) in EUR, inclusive. Present for ~35% of the register against revenue's ~3%, so this is usually the better size filter. */
+                /** @description Minimum balance-sheet total (Bilanzsumme) in EUR, inclusive. Every filing company publishes a balance sheet, so this is the widest-reaching size filter. */
                 total_assets_min?: number | null;
                 /** @description Maximum balance-sheet total (Bilanzsumme) in EUR, inclusive. */
                 total_assets_max?: number | null;
-                /** @description Minimum reported employee count (inclusive). */
+                /** @description Minimum reported employee count, inclusive. Reporting headcount is optional for most German legal forms, so this is the narrowest of the size filters — expect small result sets. */
                 employee_count_min?: number | null;
-                /** @description Maximum reported employee count (inclusive). */
+                /** @description Maximum reported employee count, inclusive. */
                 employee_count_max?: number | null;
-                /** @description One or more WZ 2025 codes (German *Klassifikation der Wirtschaftszweige 2025*, compatible with NACE Rev. 2.1). Accepted at any level of the dotted hierarchy: section letter (`J`), 2-digit division (`62`), 3-digit group (`62.0`), 4-digit class (`62.01`), or 5-digit national subclass (`62.01.9`). Matches the company's primary code plus all parent levels. Repeat the parameter for multiple values; OR-merged with `industry_slug`. */
+                /**
+                 * @description WZ 2025 industry code (German *Klassifikation der Wirtschaftszweige 2025*, compatible with NACE Rev. 2.1), at any level of the hierarchy: `K` (section), `62` (division), `62.1` (group), `62.10` (class) or `62.10.3` (subclass). Matches the company's primary code and all its parent levels. Multi-valued, OR-merged with `industry_slug`.
+                 *
+                 *     **Codes are WZ 2025, not WZ 2008** — the two are not interchangeable and a WZ 2008 code usually matches nothing. Classes were renumbered (`62.01` became `62.10`) and the section letters were reassigned, so WZ 2008's `K` (finance) is now `L`, and `K` is IT and telecoms.
+                 */
                 wz_2025_code?: string[] | null;
-                /** @description One or more firmendata industry slugs. Each expands to a list of 2-digit WZ 2025 divisions and is OR-merged with any explicit `wz_2025_code` values. */
+                /** @description High-level firmendata industry category. Expands server-side to WZ 2025 divisions. Multi-valued, OR-merged with `wz_2025_code`. */
                 industry_slug?: components["schemas"]["IndustrySlug"][] | null;
-                /** @description One or more German legal-form short names (e.g. `GmbH`, `AG`, `GmbH & Co. KG`). Server-side they are expanded into the full set of 6-digit Rechtsform codes before querying. Repeat for multiple values. */
+                /** @description German legal form. Multi-valued. Common abbreviations and the long forms are accepted too (`eK`, `UG (haftungsbeschränkt)`, `GmbH & Co KG`). */
                 rechtsform?: components["schemas"]["Rechtsform"][] | null;
-                /** @description Filter by associated person's name (current or historical board member, shareholder, etc.). */
+                /** @description Name of an associated person — current or historical board member, shareholder or partner. Combines with the other filters, which narrow the companies that person is linked to. */
                 person_name?: string | null;
-                /** @description Filter by Common Procurement Vocabulary (CPV) code from public-procurement awards. */
+                /** @description CPV (Common Procurement Vocabulary) prefix from the EU tenders a company won — `45` matches all construction contracts. */
                 cpv_code?: string | null;
-                /** @description Minimum average birth year across a company's associated persons (board, shareholders). Use with `avg_birth_year_max` for a range. */
+                /** @description Minimum average birth year across the company's associated persons. */
                 avg_birth_year_min?: number | null;
-                /** @description Maximum average birth year across a company's associated persons. */
+                /** @description Maximum average birth year across the company's associated persons. */
                 avg_birth_year_max?: number | null;
                 /**
-                 * @description Filter by company lifecycle status, resolved from the merged Handelsregister (SI + CD) and Insolvenzbekanntmachungen timelines. Repeat the parameter for multiple values, which are OR-merged.
+                 * @description Company lifecycle status, resolved from the merged Handelsregister (SI + CD) and Insolvenzbekanntmachungen timelines. Multi-valued.
                  *
-                 *     `active` — no insolvency or dissolution on record.
-                 *     `in_liquidation` — dissolved (Auflösung, whether voluntary or as a consequence of insolvency) with a Liquidator in office.
-                 *     `insolvent` — insolvency proceedings open or preliminary measures in force.
-                 *     `dissolved` — dissolved with no Liquidator in office, or an insolvency proceeding since lifted.
-                 *     `deleted` — removed from the register; outranks the others.
+                 *     - `active` — no insolvency or dissolution on record
+                 *     - `insolvent` — proceedings open or preliminary measures in force
+                 *     - `in_liquidation` — dissolved, with a Liquidator in office
+                 *     - `dissolved` — dissolved with no Liquidator, or a proceeding since lifted
+                 *     - `deleted` — removed from the register; outranks the others
                  *
-                 *     Selecting every value is the same as selecting none.
+                 *     The five are disjoint and exhaustive, so selecting every value is the same as selecting none.
                  */
                 legal_status?: components["schemas"]["LegalStatus"][] | null;
-                /** @description Filter to companies appearing in at least one of the selected external registries (OR-merged). Values: `Steuerberaterkammer` (BStBK directory), `Wirtschaftsprueferkammer` (WPK directory), `bbh` (BBH Bundesverband / Bilanzbuchhalter), `BaFin` (BaFin institutes), `LEI` (active LEIs only). Repeat the parameter for multiple values. */
+                /**
+                 * @description Companies listed in at least one of these external registries. Multi-valued.
+                 *
+                 *     - `Steuerberaterkammer` — BStBK directory
+                 *     - `Wirtschaftsprueferkammer` — WPK directory
+                 *     - `bbh` — Bundesverband der Bilanzbuchhalter
+                 *     - `BaFin` — supervised institutes
+                 *     - `LEI` — holds an active Legal Entity Identifier
+                 */
                 membership?: components["schemas"]["Membership"][] | null;
-                /** @description Exact LEI (20-character ISO-17442 identifier). Matches the company whose active `company_lei` row carries this LEI. Case-insensitive — uppercased server-side. */
+                /** @description Exact LEI (ISO 17442), matched against the company's active LEI record. Case-insensitive. */
                 lei_code?: string | null;
-                /** @description Exact USt-IdNr (German / EU VAT identification number) matched against `company_website.ust_idnr`. Case-insensitive — uppercased and whitespace-stripped server-side. */
+                /** @description Exact USt-IdNr (German / EU VAT number) as published on the company's Impressum. Case-insensitive. */
                 ust_idnr?: string | null;
-                /** @description Restrict to companies with (`true`) or without (`false`) a known website. Omit to ignore the filter. */
+                /** @description Restrict to companies with (`true`) or without (`false`) a known website. */
                 has_website?: boolean | null;
-                /** @description Restrict to companies with (`true`) or without (`false`) a known email. Omit to ignore the filter. */
+                /** @description Restrict to companies with (`true`) or without (`false`) a known email. */
                 has_email?: boolean | null;
-                /** @description When `true`, additionally search the German company registers live for the keyword (`q` or `company_name` — required with this flag) and index any hits not yet known to firmendata. Companies missing from the search index are appended to this response's first page as extra hits carrying identity, register reference and seat only — financials and web presence are unknown at discovery time and are filled in shortly afterwards on our side. Only valid on the first page (no `cursor`). Adds upstream latency (typically a few seconds) and a higher credit cost. Scraping failures never fail the request — `freshness.realtime_fetching_status` reports the outcome. */
+                /** @description Also search the German registers live for `q` / `company_name` (one is required with this flag) and append any companies not yet indexed, carrying identity and seat only. First page only. Adds a few seconds of latency and costs more credits; scraping failures never fail the request — check `freshness.realtime_fetching_status`. */
                 fetch_realtime?: boolean;
                 /**
-                 * @description Filter to companies that appear in EU public-procurement notices (TED), in the selected role. Repeat the parameter for multiple values, which are OR-merged.
+                 * @description Companies appearing in EU public-procurement notices (TED), in the selected role. Multi-valued.
                  *
-                 *     `winner` — was awarded a public contract.
-                 *     `buyer` — published a notice as the contracting authority.
+                 *     - `winner` — was awarded a public contract
+                 *     - `buyer` — published a notice as the contracting authority
                  *
-                 *     The roles overlap: a company can be both. Unlike `legal_status` they are not exhaustive — about 99% of the register appears in neither — so selecting both values is a genuine filter meaning "appears in TED at all", not a no-op.
-                 *
-                 *     Coverage starts with notices published 2025-01-02. `buyer` is intrinsically small (a few thousand companies): most contracting authorities are municipalities or Anstalten des öffentlichen Rechts with no Handelsregister entry to match.
+                 *     The roles overlap and are *not* exhaustive — most of the register appears in neither — so unlike `legal_status`, selecting both is a real filter meaning "appears in TED at all". Coverage starts with notices published 2025-01-02. `buyer` is intrinsically small: most contracting authorities have no Handelsregister entry to match against.
                  */
                 tender_role?: components["schemas"]["TenderRole"][] | null;
             };

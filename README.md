@@ -2,8 +2,8 @@
 
 Official TypeScript/JavaScript client for the [firmendata](https://firmendata.com)
 API — data on **2.4 million German companies** from the Unternehmensregister and
-Handelsregister: register profiles, parsed annual financial statements,
-shareholder cap tables, UBO chains, insolvency notices and public-tender links.
+Handelsregister: register search, parsed annual financial statements, company
+profiles, register documents, and ownership chains for KYC.
 
 [![npm](https://img.shields.io/npm/v/firmendata)](https://www.npmjs.com/package/firmendata)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -36,37 +36,163 @@ API, back a search box, or run low-volume queries. Add a key for substantially
 higher limits plus every other endpoint. On a `429`, honour `Retry-After`; the
 client already does this for you.
 
-## With an API key
-
-Create one at [firmendata.com](https://firmendata.com/de/account/api-keys) — the
-free plan includes 100 credits.
+Create a key at [firmendata.com](https://firmendata.com/de/account/api-keys) —
+the free plan includes 100 credits.
 
 ```ts
 const fd = new FirmenData({ apiKey: process.env.FIRMENDATA_API_KEY });
+```
 
-// Filters combine with AND; arrays combine with OR
+## Search the register
+
+The main entry point: 37 filters over all 2.4 million companies. Different
+filters combine with AND, repeated values with OR.
+
+```ts
 const results = await fd.search({
-  city: ['Berlin', 'Hamburg'],
-  revenue_min: 1_000_000,
-  legal_status: ['insolvent'],
+  bundesland: ['Bayern', 'Baden-Württemberg'],
+  industry_slug: ['manufacturing'],
+  total_assets_min: 1_000_000,
+  legal_status: ['active'],
+  sort: 'total_assets',
   limit: 25,
 });
 
-// Paginate
+for (const hit of results.data) {
+  console.log(hit.display_name, hit.address.city, hit.total_assets);
+}
+
 if (results.pagination.has_more) {
   const next = await fd.search({ cursor: results.pagination.next_cursor });
 }
 ```
 
-```ts
-const euId = 'DEB1103R_HRB123456';
+Values are case-insensitive and tolerate German spelling both ways — `gmbh`,
+`muenchen`, `NRW` and `Bavaria` all resolve. Filter by legal form, legal
+status, register court, federal state, city, industry, founding date, size,
+web presence, connected person or EU public-procurement role; see the
+[filter reference](https://api.firmendata.com/v1/docs#tag/Search).
 
-await fd.getCompany(euId); // full profile
-await fd.getFinancials(euId); // multi-year statements, parsed into figures
-await fd.getShareholders(euId); // cap table from the Gesellschafterliste
-await fd.getUbo(euId); // beneficial owners through ownership chains
-await fd.getHistory(euId); // chronological register history
+> **Filtering on size? Use `total_assets`, not `revenue`.** Small and
+> medium-sized German companies file abridged accounts — a balance sheet, but
+> no profit-and-loss statement and no headcount. A revenue or employee bound
+> therefore narrows your results to the minority that publish a full P&L,
+> while the balance-sheet total is available for every filing company.
+
+## Company profile
+
+```ts
+const euId = 'DEB1103R_HRB123456'; // from search or autocomplete
+
+const company = await fd.getCompany(euId);
+const history = await fd.getHistory(euId); // chronological register entries
 ```
+
+Identity and seat, register reference, legal status resolved from the merged
+Handelsregister and Insolvenzbekanntmachungen timelines, industry
+classification, contact details and web presence.
+
+## Financial statements
+
+Filed annual accounts, parsed into figures rather than handed to you as PDFs.
+The deepest part of the dataset: German companies must publish, and we parse
+what they file into structured multi-year figures.
+
+```ts
+const { summary, history } = await fd.getFinancials(euId);
+
+console.log(summary?.latest_fiscal_year, summary?.latest_total_assets);
+
+for (const year of history.metrics) {
+  console.log(year.year, year.balance_sheet_total, year.revenue, year.profit);
+}
+```
+
+`history` also carries the structured `profit_and_loss`, `assets` and
+`liabilities_and_equity` rows as filed, plus `employee_history` and the
+underlying `financial_publications`.
+
+`summary` is `null` when nothing is on file. Within it, figures resolve to the
+most recent filing that actually carries each one, so revenue and profit can
+come from _different_ fiscal years — don't assume two share a year when
+computing a ratio.
+
+## Documents
+
+```ts
+const doc = await fd.downloadDocument(euId, { fileType: 'CD' });
+```
+
+Aktueller and Chronologischer Abdruck, Gesellschafterliste, Satzung,
+Anmeldung and Musterprotokoll, as presigned download URLs.
+
+## Ownership: shareholders and UBO
+
+Cap tables and beneficial-owner chains, for **KYC and AML workflows**.
+
+**Pass `fetchRealtime: true` on both of these.** Unlike the endpoints above,
+which read an index we keep continuously fresh, cap tables are parsed from the
+filed Gesellschafterliste on demand — the flag fetches and parses the current
+filing for the company (and, for `getUbo`, every German company in its
+ownership chain). Without it you are limited to whatever has already been
+parsed, and will often get `not_filed` for a company that has in fact filed.
+It costs more credits and takes a few seconds per company in the chain, which
+is the right trade for a KYC check.
+
+```ts
+const cap = await fd.getShareholders(euId, { fetchRealtime: true });
+
+if (cap.coverage.status === 'available') {
+  for (const s of cap.as_of_snapshot.shareholders) {
+    console.log(s.display_name, s.share_percent);
+  }
+}
+
+const ubo = await fd.getUbo(euId, { fetchRealtime: true });
+console.log(ubo.coverage.status, ubo.beneficial_owners);
+```
+
+**What limits these:**
+
+- **Only GmbH, UG and gGmbH file a Gesellschafterliste.** For an AG, KG, e.K.
+  or any other form there is no cap table to read and `coverage.status` is
+  `not_applicable` — not an error, and not something a retry will fix.
+- **Without `fetchRealtime`, `not_filed` does not mean "never filed."** It
+  means no parsed cap table is on hand for that company yet. Re-request with
+  the flag before concluding anything about a company's ownership.
+- **Always branch on `coverage.status`**, never on an empty array. The two
+  endpoints have different vocabularies:
+  `getShareholders` → `available` | `not_filed` | `not_applicable` |
+  `token_limit_reached` (the filing was too large to parse);
+  `getUbo` → `available` | `partial` | `not_filed` | `not_applicable`.
+  **`partial` is the one to handle**: an unresolved branch could still hide a
+  beneficial owner, so read `potential_beneficial_owners` and
+  `coverage.reason` rather than treating the result as complete.
+- **An empty `beneficial_owners` is a real answer**, not a failure: it means
+  nobody crosses the 25% threshold. Fictional UBO under §3 Abs. 2 S. 5 GwG is
+  not surfaced.
+- **Attribution is all-or-nothing, not multiplicative.** A holds 60% of H and
+  H holds 30% of the root → A is a UBO at **30%**, not 18%. Each link is
+  independently tested against the 25% threshold, so a sub-threshold link
+  breaks the chain entirely.
+
+## Subscriptions
+
+Get notified when a company's data changes, instead of polling:
+
+```ts
+const sub = await fd.createSubscription({
+  eu_id: euId,
+  subscription_type: 'shareholders', // or details, history, ubo, doc_*
+  cadence: 'weekly', // immediately | daily | weekly | monthly
+  notification_type: 'webhook',
+  webhook_url: 'https://example.com/hooks/firmendata',
+});
+```
+
+Webhook bodies are HMAC-SHA256 signed — verify `X-Firmendata-Signature`
+against the secret returned at creation. Omit `notification_type` to poll
+`listEvents()` on your own schedule instead.
 
 ## Errors
 
