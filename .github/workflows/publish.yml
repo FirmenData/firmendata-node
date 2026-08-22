@@ -54,9 +54,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          # Node 22 ships an npm new enough for both provenance and the OIDC
-          # exchange (npm >= 11.5.1 is required for trusted publishing).
-          node-version: 22
+          # `lts/*`, not a pinned 22: trusted publishing needs npm >= 11.5.1
+          # and Node 22.23.2 ships npm **10.9.8**. The 0.2.0 release failed on
+          # exactly that — npm never attempted the OIDC exchange and went
+          # straight to `ENEEDAUTH`, with no NPM_TOKEN configured to fall back
+          # to. The sibling n8n-nodes-firmendata workflow already used `lts/*`
+          # and published the same tag without trouble.
+          node-version: 'lts/*'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
