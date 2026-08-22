@@ -58,10 +58,27 @@ export type SubscriptionCreated = paths['/v1/subscriptions']['post'] extends {
   ? R
   : ResponseOf<paths['/v1/subscriptions']['post']>;
 
+/**
+ * Properties the API fills in when you omit them.
+ *
+ * `openapi-typescript` marks a schema property carrying a `default` as
+ * **required**, even when the spec's `required` list leaves it out — reasonable
+ * for a response (the server always sends it), wrong for a request body. Left
+ * alone it forces every caller to spell out `cadence`, `language` and `mode` on
+ * a create call the API accepts without them.
+ *
+ * Asserted against the vendored contract in `test/types.test.ts`, so a newly
+ * defaulted property fails CI instead of silently staying mandatory here.
+ */
+export type SubscriptionCreateRequestDefaults = 'cadence' | 'language' | 'mode';
+
+type WithOptionalDefaults<B> = Omit<B, SubscriptionCreateRequestDefaults> &
+  Partial<Pick<B, Extract<SubscriptionCreateRequestDefaults, keyof B>>>;
+
 export type SubscriptionCreateRequest = paths['/v1/subscriptions']['post'] extends {
   requestBody: { content: { 'application/json': infer B } };
 }
-  ? B
+  ? WithOptionalDefaults<B>
   : never;
 
 export type { paths };

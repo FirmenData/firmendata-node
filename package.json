@@ -51,8 +51,9 @@
     "test:watch": "vitest",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
-    "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "typecheck": "tsc --noEmit && node scripts/check-readme.mjs",
+    "prepublishOnly": "npm run build",
+    "check:readme": "node scripts/check-readme.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",

@@ -10,4 +10,12 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': 'error',
     },
   },
+  {
+    // Build/dev tooling runs on Node, unlike the library itself — which is
+    // deliberately platform-`fetch` only and must not reach for Node globals.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { console: 'readonly', process: 'readonly' },
+    },
+  },
 );
