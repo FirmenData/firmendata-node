@@ -372,6 +372,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your company lists
+         * @description Every company list the authenticated caller owns, newest first.
+         *
+         *     Returns each list's id, name, company count and whether change alerts are
+         *     enabled — enough to pick one and fetch its companies with
+         *     `GET /v1/lists/{list_id}`. Lists are created and edited in the web app.
+         *
+         *
+         *     ## Pricing
+         *
+         *     See the [pricing page](https://firmendata.com/en/plans) for this endpoint's credit cost.
+         */
+        get: operations["getLists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/lists/{list_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Companies on a list
+         * @description One page of companies from one of the caller's lists.
+         *
+         *     - **Rows** match `GET /v1/companies/search` hits exactly, so both surfaces
+         *       deserialize into the same type
+         *     - **`sort`** orders the whole list before the page is cut, so paging never
+         *       reshuffles rows. Omit it for the order companies were added in
+         *     - **Pagination** is the standard opaque cursor; `pagination.total_approx` is
+         *       the list's exact size
+         *
+         *     A list id that does not exist, or belongs to someone else, returns `404` —
+         *     the two are deliberately indistinguishable.
+         *
+         *
+         *     ## Pricing
+         *
+         *     See the [pricing page](https://firmendata.com/en/plans) for this endpoint's credit cost.
+         */
+        get: operations["getList"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/subscriptions": {
         parameters: {
             query?: never;
@@ -1146,6 +1210,8 @@ export interface components {
              * @description Date of the company's first observable register entry.
              */
             first_register_entry_at?: string | null;
+            /** @description Founder, family-involvement and succession assessment derived from the register's board history. `null` when the company could not be assessed at all. */
+            founder_profile?: components["schemas"]["FounderProfileBlock"] | null;
             /**
              * Founding Document Date
              * @description Date of the founding document (Gründungsdokument), as filed in the register.
@@ -1488,6 +1554,123 @@ export interface components {
             zweigniederlassungen?: components["schemas"]["RegisterHistoryEvent"][];
         };
         /**
+         * CompanyListDetailResponse
+         * @description Response envelope for `GET /v1/lists/{list_id}`.
+         */
+        CompanyListDetailResponse: {
+            /**
+             * Data
+             * @description One page of the list's companies. Same row shape as `/companies/search`, so both surfaces deserialize into one type.
+             */
+            data?: components["schemas"]["SearchHit"][];
+            /**
+             * Filters Echo
+             * @description The effective filter values applied to this query, echoed back for client convenience.
+             */
+            filters_echo?: {
+                [key: string]: unknown;
+            };
+            /**
+             * List Id
+             * @description Identifier of the list.
+             */
+            list_id: number;
+            /**
+             * Name
+             * @description List name as set in the app.
+             */
+            name: string;
+            /**
+             * Object
+             * @description Discriminator. Always `list`.
+             * @default list
+             * @constant
+             */
+            object: "list";
+            /** @description Pagination metadata for this page. */
+            pagination?: components["schemas"]["PaginationInfo"];
+        };
+        /**
+         * CompanyListSummary
+         * @description One of the caller's company lists, without its companies.
+         */
+        CompanyListSummary: {
+            /**
+             * Alerts Enabled
+             * @description `true` when change alerts are switched on for this list.
+             * @default false
+             */
+            alerts_enabled: boolean;
+            /**
+             * Company Count
+             * @description How many companies are on the list.
+             * @default 0
+             */
+            company_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When the list was created.
+             */
+            created_at: string;
+            /**
+             * Is Shared
+             * @description `true` when a public share link is currently active.
+             * @default false
+             */
+            is_shared: boolean;
+            /**
+             * List Id
+             * @description Identifier to pass to `GET /v1/lists/{list_id}`.
+             */
+            list_id: number;
+            /**
+             * Name
+             * @description List name as set in the app.
+             */
+            name: string;
+            /**
+             * Object
+             * @description Discriminator. Always `company_list`.
+             * @default company_list
+             * @constant
+             */
+            object: "company_list";
+            /**
+             * Updated At
+             * Format: date-time
+             * @description When the list was last changed.
+             */
+            updated_at: string;
+        };
+        /**
+         * CompanyListsResponse
+         * @description Response envelope for `GET /v1/lists`.
+         */
+        CompanyListsResponse: {
+            /**
+             * Data
+             * @description The caller's lists, newest first.
+             */
+            data?: components["schemas"]["CompanyListSummary"][];
+            /**
+             * Filters Echo
+             * @description The effective filter values applied to this query, echoed back for client convenience.
+             */
+            filters_echo?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Object
+             * @description Discriminator. Always `list`.
+             * @default list
+             * @constant
+             */
+            object: "list";
+            /** @description Pagination metadata for this page. */
+            pagination?: components["schemas"]["PaginationInfo"];
+        };
+        /**
          * ContactBlock
          * @description Contact/web-presence block. Populated only when `expand=contact`.
          */
@@ -1756,6 +1939,144 @@ export interface components {
              * @constant
              */
             object: "financial_summary";
+        };
+        /**
+         * FounderProfileBlock
+         * @description Founder, family-involvement and succession assessment.
+         *
+         *     Every field is **derived** from the register's board history rather
+         *     than read off a filing, so each verdict ships with the evidence that
+         *     produced it. The three verdicts are deliberately nullable and `null`
+         *     never means "no": it means the register does not support an answer.
+         */
+        FounderProfileBlock: {
+            /**
+             * As Of
+             * @description Date of the register snapshot this rests on. A director who resigned after this date is not yet reflected.
+             */
+            as_of?: string | null;
+            /**
+             * Evidence Source
+             * @description Which register sources backed this assessment: `cd` (chronological extract), `si` (structured snapshot) or `cd+si`.
+             */
+            evidence_source?: string | null;
+            /**
+             * Family Confidence
+             * @description `confirmed` rests on two identified people; `likely` on the name alone.
+             */
+            family_confidence?: ("confirmed" | "likely") | null;
+            /**
+             * Family Managed
+             * @description Whether two or more members of one family hold an ownership or governing role. `null` when the register shows only one person and the company name carries no family signal — there is then nothing to compare against, which is not the same as unrelated.
+             */
+            family_managed?: boolean | null;
+            /**
+             * Family Signals
+             * @description Which signals fired: `shared_surname`, `eponymous` (a person's surname is in the company name), `lexical` (`Gebr.`, `& Söhne`), `multigenerational` (relatives a generation apart), `shared_address`.
+             * @example [
+             *       "shared_surname",
+             *       "eponymous"
+             *     ]
+             */
+            family_signals?: string[];
+            /**
+             * Family Surname
+             * @description Normalised surname the family signal rests on.
+             */
+            family_surname?: string | null;
+            /**
+             * Founder Count
+             * @description How many natural persons were identified at first registration.
+             * @default 0
+             */
+            founder_count: number;
+            /**
+             * Founder Led
+             * @description Whether someone holding a role at first registration is still in office. `null` when the chronological extract is missing, or begins with a transfer from another register court — its first entry then records the move, not the founding.
+             */
+            founder_led?: boolean | null;
+            /**
+             * Founder Led Confidence
+             * @description `likely` when the company was renamed shortly after registration, the signature of a shelf company (Vorratsgesellschaft) whose first officer is the provider's nominee rather than a founder.
+             */
+            founder_led_confidence?: ("confirmed" | "likely") | null;
+            /**
+             * Founder Led Since
+             * @description Start of the longest-serving founder's tenure.
+             */
+            founder_led_since?: string | null;
+            /**
+             * Founders
+             * @description The identified founders.
+             */
+            founders?: components["schemas"]["FounderRecordItem"][];
+            /**
+             * Object
+             * @description Discriminator. Always `founder_profile`.
+             * @default founder_profile
+             * @constant
+             */
+            object: "founder_profile";
+            /**
+             * Oldest Founder Birth Year
+             * @description Birth year of the oldest founder still serving.
+             */
+            oldest_founder_birth_year?: number | null;
+            /**
+             * Succession Risk
+             * @description Whether the oldest serving founder has reached 65. `null` when the company is not founder-led, or no founder birth date is on record.
+             */
+            succession_risk?: boolean | null;
+        };
+        /**
+         * FounderRecordItem
+         * @description One person identified as holding a role at first registration.
+         */
+        FounderRecordItem: {
+            /**
+             * Birth Year
+             * @description Year of birth, when the register records a birth date.
+             */
+            birth_year?: number | null;
+            /**
+             * Entry Date
+             * @description Date of the first register entry, `DD.MM.YYYY`.
+             */
+            entry_date?: string | null;
+            /**
+             * First Name
+             * @description Given name as filed.
+             */
+            first_name?: string | null;
+            /**
+             * Last Name
+             * @description Family name as filed.
+             */
+            last_name?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `founder`.
+             * @default founder
+             * @constant
+             */
+            object: "founder";
+            /**
+             * Role
+             * @description Role held at first registration (e.g. `Geschäftsführer`, `Kommanditist`).
+             * @example Geschäftsführer
+             */
+            role?: string | null;
+            /**
+             * Share Percent
+             * @description Capital share held at founding, in percent. Only limited partners (Kommanditisten) record this in the register; for every other legal form the founding cap table is not public register data and this is `null`.
+             */
+            share_percent?: number | null;
+            /**
+             * Still Serving
+             * @description Whether this person is still in office.
+             * @default false
+             */
+            still_serving: boolean;
         };
         /**
          * Freshness
@@ -4063,6 +4384,20 @@ export interface operations {
                  *     The roles overlap and are *not* exhaustive — most of the register appears in neither — so unlike `legal_status`, selecting both is a real filter meaning "appears in TED at all". Coverage starts with notices published 2025-01-02. `buyer` is intrinsically small: most contracting authorities have no Handelsregister entry to match against.
                  */
                 tender_role?: components["schemas"]["TenderRole"][] | null;
+                /**
+                 * @description Restrict to companies where two or more members of one family hold an ownership or governing role (`true`), or where the people on record are unrelated (`false`).
+                 *
+                 *     Derived from the register: shared surnames among owners and officers, a founder's surname carried in the company name, family wording in the name (`Gebr.`, `& Söhne`), a generation gap between two relatives, or a shared address. Companies whose register entry shows only one person and whose name says nothing are reported as neither — they are excluded from both `true` and `false` rather than assumed unrelated. Spouses who took different surnames are not visible to this filter, so it under-reports rather than over-claims.
+                 */
+                family_managed?: boolean | null;
+                /**
+                 * @description Restrict to companies where a person holding an ownership or governing role at first registration is still in office (`true`), or where the founding officers have all been replaced (`false`).
+                 *
+                 *     Requires the chronological register extract, so companies whose history has not been parsed are excluded from both values. Companies whose extract begins with a transfer from another register court are also excluded: their first entry records the move, not the founding.
+                 */
+                founder_led?: boolean | null;
+                /** @description Restrict to founder-led companies whose oldest serving founder has reached 65 (`true`), or has not (`false`). Companies that are not founder-led, and founders with no birth date on record, are excluded from both values. */
+                succession_risk?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -4893,6 +5228,265 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UboReport"];
+                };
+            };
+            /** @description Missing, invalid, revoked, or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 401,
+                     *       "title": "Authentication required.",
+                     *       "type": "https://api.firmendata.com/problems/unauthenticated"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The requested resource does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "No company with id DEF1103R.HRB999999B.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 404,
+                     *       "title": "Resource not found.",
+                     *       "type": "https://api.firmendata.com/problems/not-found"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Request validation failed; see `errors[]` for per-field details. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "One or more query parameters are invalid.",
+                     *       "errors": [
+                     *         {
+                     *           "code": "less_than_or_equal",
+                     *           "path": "limit"
+                     *         },
+                     *         {
+                     *           "code": "enum_mismatch",
+                     *           "path": "wz_2025_code"
+                     *         }
+                     *       ],
+                     *       "instance": "/v1/companies/search",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 422,
+                     *       "title": "Request validation failed.",
+                     *       "type": "https://api.firmendata.com/problems/validation-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded. Rejected requests do not consume the limit or any credits. Honour `Retry-After` (seconds) before retrying. */
+            429: {
+                headers: {
+                    /** @description Numeric limit of the tighter window currently applying. */
+                    "RateLimit-Limit"?: number;
+                    /** @description Requests left in that window (0 on 429). */
+                    "RateLimit-Remaining"?: number;
+                    /** @description Seconds until the window resets. */
+                    "RateLimit-Reset"?: number;
+                    /** @description Seconds to wait before the next request will succeed. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
+                     *       "instance": "/v1/companies/autocomplete",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 429,
+                     *       "title": "Too many requests.",
+                     *       "type": "https://api.firmendata.com/problems/rate-limit-exceeded"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 500,
+                     *       "title": "Internal server error.",
+                     *       "type": "https://api.firmendata.com/problems/server-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getLists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's lists. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyListsResponse"];
+                };
+            };
+            /** @description Missing, invalid, revoked, or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 401,
+                     *       "title": "Authentication required.",
+                     *       "type": "https://api.firmendata.com/problems/unauthenticated"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Request validation failed; see `errors[]` for per-field details. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "One or more query parameters are invalid.",
+                     *       "errors": [
+                     *         {
+                     *           "code": "less_than_or_equal",
+                     *           "path": "limit"
+                     *         },
+                     *         {
+                     *           "code": "enum_mismatch",
+                     *           "path": "wz_2025_code"
+                     *         }
+                     *       ],
+                     *       "instance": "/v1/companies/search",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 422,
+                     *       "title": "Request validation failed.",
+                     *       "type": "https://api.firmendata.com/problems/validation-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded. Rejected requests do not consume the limit or any credits. Honour `Retry-After` (seconds) before retrying. */
+            429: {
+                headers: {
+                    /** @description Numeric limit of the tighter window currently applying. */
+                    "RateLimit-Limit"?: number;
+                    /** @description Requests left in that window (0 on 429). */
+                    "RateLimit-Remaining"?: number;
+                    /** @description Seconds until the window resets. */
+                    "RateLimit-Reset"?: number;
+                    /** @description Seconds to wait before the next request will succeed. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
+                     *       "instance": "/v1/companies/autocomplete",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 429,
+                     *       "title": "Too many requests.",
+                     *       "type": "https://api.firmendata.com/problems/rate-limit-exceeded"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 500,
+                     *       "title": "Internal server error.",
+                     *       "type": "https://api.firmendata.com/problems/server-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getList: {
+        parameters: {
+            query?: {
+                /** @description Companies per page. */
+                limit?: number;
+                /** @description Opaque pagination cursor. Pass the `pagination.next_cursor` from a previous response to fetch the next page. */
+                cursor?: string | null;
+                /** @description Order the list by a column instead of by when companies were added. Same vocabulary as `/companies/search`. */
+                sort?: components["schemas"]["Sort"] | null;
+                /** @description Sort direction; applies only with `sort`. */
+                sort_direction?: components["schemas"]["SortDirection"];
+            };
+            header?: never;
+            path: {
+                /** @description Identifier of one of your lists, from `GET /v1/lists`. */
+                list_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the list's companies. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyListDetailResponse"];
                 };
             };
             /** @description Missing, invalid, revoked, or expired bearer token. */
