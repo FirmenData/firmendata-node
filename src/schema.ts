@@ -1671,6 +1671,19 @@ export interface components {
             pagination?: components["schemas"]["PaginationInfo"];
         };
         /**
+         * CompanySize
+         * @description Statutory size class under § 267 HGB, read from the filing's own form.
+         *
+         *     A class is assigned only where the company claimed a size-dependent
+         *     relief, which is an assertion of being at most that size. Publishing more
+         *     than required is permitted at every size and asserts nothing, so a company
+         *     filing a full profit-and-loss statement carries no class — for those the
+         *     reported revenue is the answer. The values are therefore not exhaustive,
+         *     and selecting both is a real filter rather than a no-op.
+         * @enum {string}
+         */
+        CompanySize: "klein" | "mittelgross";
+        /**
          * ContactBlock
          * @description Contact/web-presence block. Populated only when `expand=contact`.
          */
@@ -1794,6 +1807,14 @@ export interface components {
         FinancialMetric: {
             /** @description Balance-sheet total. */
             balance_sheet_total?: components["schemas"]["Money"] | null;
+            /**
+             * Ceiling Basis
+             * @description Which second criterion forces `revenue_ceiling` — `ceiling_balance_sheet` or `ceiling_employees`. Null whenever `revenue_ceiling` is null.
+             * @example ceiling_balance_sheet
+             */
+            ceiling_basis?: string | null;
+            /** @description Rohergebnis (§ 276 HGB) — the collapsed top line a small or medium-sized company may publish *instead of* revenue and cost of materials. Where this is set and `revenue` is null, this is the only top-line figure on file. It is not revenue and must not be compared with it: it is already net of input costs. */
+            gross_profit?: components["schemas"]["Money"] | null;
             /** @description Total liabilities and equity. */
             liabilities_and_equity_total?: components["schemas"]["Money"] | null;
             /**
@@ -1805,8 +1826,37 @@ export interface components {
             object: "financial_metric";
             /** @description Annual profit for this year. */
             profit?: components["schemas"]["Money"] | null;
-            /** @description Annual revenue for this year. */
+            /** @description Annual revenue (Umsatzerlöse) for this year. Null when the company did not publish it — see `size_class`, which says what the omission itself discloses. */
             revenue?: components["schemas"]["Money"] | null;
+            /**
+             * @description Highest revenue this company can have had in this fiscal year without losing the size class it filed under — a hard upper bound, not an estimate.
+             *
+             *     Usually null, and that is the normal case rather than missing data: § 267 asks whether a company exceeds **at least two of three** criteria, so a size class alone permits any revenue. The bound only exists where a second criterion (balance-sheet total or employees) is already over its limit, which forces revenue under its own. Where it is null, no revenue bound follows from the class and none should be inferred.
+             * @example {
+             *       "amount": 12000000,
+             *       "currency": "EUR"
+             *     }
+             */
+            revenue_ceiling?: components["schemas"]["Money"] | null;
+            /**
+             * Size Basis
+             * @description Why `size_class` was assigned, as a stable code:
+             *
+             *     - `no_guv` — no profit-and-loss statement published (§ 326 Abs. 1)
+             *     - `rohergebnis` — P&L collapsed to a Rohergebnis (§ 276)
+             *     - `declared` — the filing states its own class
+             *     - `ceiling_balance_sheet` / `ceiling_employees` — a second § 267 criterion is over its limit, which tightened the class
+             * @example no_guv
+             */
+            size_basis?: string | null;
+            /**
+             * Size Class
+             * @description Statutory size class for this fiscal year — `kleinst`, `klein`, `mittelgross` or `gross` (§ 267 / § 267a HGB).
+             *
+             *     Derived from the reliefs the filing claims, so it is an exact statement about the company's own filing, not an estimate. **Null never means large.** It means the filing asserts no size — typically because a full profit-and-loss statement was published, in which case `revenue` carries the answer directly.
+             * @example klein
+             */
+            size_class?: string | null;
             /**
              * Year
              * @description Fiscal year.
@@ -2783,7 +2833,7 @@ export interface components {
          * RegisterType
          * @enum {string}
          */
-        RegisterType: "HRA" | "HRB" | "GnR" | "PR" | "VR" | "GsR";
+        RegisterType: "HRA" | "HRB" | "GnR" | "PR" | "VR" | "GsR" | "CH-HR";
         /**
          * RelatedCompany
          * @description Reference to a related company (parent or subsidiary).
@@ -4355,6 +4405,17 @@ export interface operations {
                  *     The five are disjoint and exhaustive, so selecting every value is the same as selecting none.
                  */
                 legal_status?: components["schemas"]["LegalStatus"][] | null;
+                /**
+                 * @description Statutory size class under § 267 HGB. Multi-valued.
+                 *
+                 *     - `klein` — kleine Kapitalgesellschaft (§ 267 Abs. 1)
+                 *     - `mittelgross` — mittelgroße Kapitalgesellschaft (§ 267 Abs. 2)
+                 *
+                 *     Read from the form of the filing itself: a company that omits its profit-and-loss statement (§ 326 Abs. 1) or collapses it into a Rohergebnis (§ 276) is claiming a relief only a company of that size may claim. Publishing *more* than required is permitted at every size and asserts nothing, so companies that file a full P&L carry no class — for those the reported `revenue` is the answer. The values are therefore not exhaustive, and selecting both is a real filter meaning "the filing form implies a size class", not a no-op the way selecting every `legal_status` is. `gross` is not offered because no relief can assert largeness: the company that claims nothing is exactly the large one.
+                 *
+                 *     Because the § 267 test is "does not exceed at least two of three" (balance-sheet total, revenue, employees), a class on its own does not bound revenue — it does so only where a second criterion is already over its limit. This filter is a size filter, not a revenue filter.
+                 */
+                company_size?: components["schemas"]["CompanySize"][] | null;
                 /**
                  * @description Companies listed in at least one of these external registries. Multi-valued.
                  *
