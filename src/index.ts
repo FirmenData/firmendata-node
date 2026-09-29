@@ -29,6 +29,6 @@ export {
   RateLimitError,
   ServerError,
 } from './errors.js';
-export type { Problem } from './errors.js';
+export type { Problem, ValidationIssue } from './errors.js';
 
 export type * from './types.js';
