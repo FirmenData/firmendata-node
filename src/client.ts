@@ -192,7 +192,9 @@ export class FirmenData {
    * Advanced search over the German commercial register.
    *
    * Filters combine with AND; array filters combine with OR internally.
-   * Paginate by passing `pagination.next_cursor` back as `cursor`.
+   * Paginate by passing `pagination.next_cursor` back as `cursor`, unchanged —
+   * cursors are signed, and one that was edited is rejected with a 422.
+   * Unknown filter names and inverted ranges are 422s too, never ignored.
    */
   search(filters: SearchFilters = {}): Promise<SearchResponse> {
     return this.#request('GET', '/v1/companies/search', {
@@ -206,8 +208,21 @@ export class FirmenData {
     });
   }
 
-  getFinancials(euId: string): Promise<CompanyFinancials> {
-    return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}/financials`);
+  /**
+   * Multi-year financials. Lean by default: the structured P&L / balance-sheet
+   * line items are only included with `includeLineItems: true`, and `years`
+   * keeps just the N most recent fiscal years in every per-year array.
+   */
+  getFinancials(
+    euId: string,
+    options: { includeLineItems?: boolean; years?: number } = {},
+  ): Promise<CompanyFinancials> {
+    return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}/financials`, {
+      query: {
+        include: options.includeLineItems ? ['line_items'] : undefined,
+        years: options.years,
+      },
+    });
   }
 
   getShareholders(
@@ -274,14 +289,15 @@ export class FirmenData {
     return this.#request('DELETE', `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`);
   }
 
+  /** One page of delivery events; pass `pagination.next_cursor` back as `cursor`. */
   listEvents(
     subscriptionId: string,
-    options: { limit?: number; offset?: number } = {},
+    options: { limit?: number; cursor?: string | null; offset?: number } = {},
   ): Promise<SubscriptionEventList> {
     return this.#request(
       'GET',
       `/v1/subscriptions/${encodeURIComponent(subscriptionId)}/events`,
-      { query: { limit: options.limit, offset: options.offset } },
+      { query: { limit: options.limit, cursor: options.cursor, offset: options.offset } },
     );
   }
 

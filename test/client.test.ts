@@ -144,13 +144,23 @@ describe('error mapping', () => {
       jsonResponse(
         422,
         problem('validation-error', 422, {
-          errors: [{ path: 'q', code: 'too_short' }],
+          errors: [{ param: 'q', message: 'String should have at least 3 characters' }],
         }),
       ),
     );
     await expect(client.autocomplete('ab')).rejects.toMatchObject({
-      errors: [{ path: 'q', code: 'too_short' }],
+      errors: [{ param: 'q', message: 'String should have at least 3 characters' }],
     });
+  });
+
+  it('asks for financial line items only when told to', async () => {
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}));
+    await client.getFinancials('DE1');
+    await client.getFinancials('DE1', { includeLineItems: true, years: 3 });
+    const [lean, full] = fetchSpy.mock.calls.map(([url]) => new URL(String(url)));
+    expect(lean?.search).toBe('');
+    expect(full?.searchParams.getAll('include')).toEqual(['line_items']);
+    expect(full?.searchParams.get('years')).toBe('3');
   });
 
   it('carries Retry-After on a rate limit', async () => {

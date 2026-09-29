@@ -52,7 +52,9 @@ export interface paths {
          *
          *     Filter values are case-insensitive, several filters accept multiple values, and
          *     the financial figures need one caveat before you compute ratios with them — see
-         *     the **Search** section above for all three.
+         *     the **Search** section above for all three. Unknown parameters, unknown filter
+         *     values and inverted ranges (`*_min` above `*_max`, `founded_from` after
+         *     `founded_to`) are rejected with `422` instead of being ignored.
          *
          *     Setting `fetch_realtime=true` additionally searches the German registers live
          *     for `q` (or `company_name`, one of which is then required) and appends any
@@ -88,11 +90,11 @@ export interface paths {
          *     - **Financial headline** — latest-year revenue, profit, assets, liabilities, equity, employee count
          *     - **Business & industry** — trade description, products, primary WZ 2025 code with the full category tree
          *     - **Management** — register entry members (managing directors, authorised signatories, supervisory board)
-         *     - **Ownership (LEI graph)** — direct parent and direct subsidiaries via GLEIF
+         *     - **Ownership (LEI graph)** — direct parent and the first 25 direct subsidiaries via GLEIF, with the total count
          *     - **Contact & web presence** — primary domain, Impressum URL, primary email, and discovered social profiles
          *     - **Insolvency** — current status, court, case number, dissolution flag, most recent event date
          *     - **AI insights** — company summary, outlook, and risk + opportunity keywords in German and English
-         *     - **Documents** — downloadable register documents available for the company (Aktueller Abdruck, Chronologischer Abdruck, Liste der Gesellschafter, Articles of Association — Gesellschaftsvertrag / Satzung / Statut depending on legal form, Anmeldung, Musterprotokoll); fetch a presigned URL via `/companies/{eu_id}/documents/download`
+         *     - **Documents** — downloadable register documents available for the company (Aktueller Abdruck, Chronologischer Abdruck, Liste der Gesellschafter, Articles of Association — Gesellschaftsvertrag / Satzung / Statut depending on legal form, Anmeldung, Musterprotokoll); fetch a presigned URL via `/companies/{eu_id}/documents/download`; `is_outdated` flags a register extract older than the latest register entry
          *
          *     For multi-year history, employee time series, relationships, and Bilanz publications, call `/companies/{eu_id}/financials`.
          *
@@ -149,8 +151,12 @@ export interface paths {
          *     Returns `404` when no matching document is available — the `detail`
          *     field distinguishes whether the document is unknown to the German
          *     registries, whether the company is no longer present in the registries,
-         *     or whether the registries were unreachable. The `download_url` is valid
-         *     for 1 day; refetch this endpoint to obtain a new URL when it expires.
+         *     or whether the registries were unreachable. A `404` costs no credits. The
+         *     `download_url` is valid for 1 day; refetch this endpoint to obtain a new
+         *     URL when it expires.
+         *
+         *     `is_outdated` flags a register extract older than the company's latest
+         *     register entry; request it with `fetch_realtime=true` for a current copy.
          *
          *
          *     ## Pricing
@@ -178,10 +184,17 @@ export interface paths {
          * @description Multi-year financial profile for one company.
          *
          *     - **Aggregated summary** — latest-year revenue, profit, assets, liabilities, and equity
-         *     - **Multi-year history** — annual top-line metrics plus structured P&L, AKTIVA, and PASSIVA rows, with AI-reconstructed P&L for small filings that lack a structured GuV
+         *     - **Multi-year history** — annual top-line metrics; with `include=line_items`, also the structured P&L, AKTIVA, and PASSIVA rows, with AI-reconstructed P&L for small filings that lack a structured GuV
          *     - **Employee time series** — total, full-time, and part-time headcount per year
          *     - **Group relationships** — parent company and known subsidiaries sourced from consolidated filings
          *     - **Filed Bilanzen** — list of Jahresabschluss and Konzernabschluss filings with type and publication date (PDF downloads are not exposed in v1)
+         *
+         *     `years=N` limits every per-year array — metrics, line items, employee
+         *     series and filings — to the N most recent fiscal years on record.
+         *
+         *     A company with no financial data on record at all (no figures, no
+         *     headcount, no filings, no group relationships) is answered with the empty
+         *     shape and costs no credits.
          *
          *
          *     ## Pricing
@@ -208,11 +221,13 @@ export interface paths {
          * Chronological register history
          * @description Aggregated chronological register-entry history for a company.
          *
-         *     For each kind of change — company name (`firma`), seat (`sitz`),
-         *     capital (`kapital`), board members, business purpose, etc. — the
-         *     endpoint returns the full timeline of entries that affected it.
-         *     `current_board` is a derived snapshot of who currently sits on the
-         *     management board.
+         *     For each kind of change — company name (`names`), seat (`seats`), share
+         *     capital (`share_capital`), officers (`board_changes`), business purpose,
+         *     legal form and articles — the endpoint returns the full timeline of
+         *     entries that affected it, oldest first. `current_board` is who holds office
+         *     now, derived by replaying every appointment, departure and correction.
+         *     Dates are ISO 8601; people use the same `person` object as the company
+         *     detail.
          *
          *     - **`fetch_realtime`** — optional. When `true`, refresh the
          *       underlying register history from the German registries before
@@ -221,9 +236,10 @@ export interface paths {
          *       still falls back to the most recent indexed data when a refresh
          *       fails.
          *
-         *     A 404 is returned when no chronological register history has ever
-         *     been recorded for this company — some Vereine and Genossenschaften
-         *     fall outside the chronological-register coverage at Handelsregister.
+         *     `coverage.status` is `not_available` when no chronological extract exists
+         *     for the company — the Swiss commercial register publishes none, and some
+         *     German entries have not been retrieved yet. Such responses carry empty
+         *     timelines and are not charged. A 404 means the company itself is unknown.
          *     The same data backs the `history` webhook subscription type, so the
          *     shape returned here is exactly the shape downstream consumers fetch
          *     when responding to a `history.updated` webhook.
@@ -263,6 +279,9 @@ export interface paths {
          *       falls back to the most recent indexed cap table when a refresh fails.
          *
          *     Historical snapshots and cross-filing diffs are reserved for a later release.
+         *
+         *     A response without a cap table (`coverage.status` other than `available`)
+         *     costs no credits.
          *
          *
          *     ## Pricing
@@ -358,6 +377,9 @@ export interface paths {
          *
          *     Designed for KYC workflows where the freshest possible chain matters.
          *
+         *     A response with `coverage.status` `not_filed` or `not_applicable` carries no
+         *     ownership data and costs no credits.
+         *
          *
          *     ## Pricing
          *
@@ -445,7 +467,7 @@ export interface paths {
         };
         /**
          * List subscriptions
-         * @description Returns every subscription owned by the calling user, newest first.
+         * @description Returns the subscriptions owned by the calling user, newest first, one page at a time. Pass `pagination.next_cursor` back as `cursor` for the next page.
          *
          *     ## Pricing
          *
@@ -874,13 +896,13 @@ export interface components {
             city?: string | null;
             /**
              * Country Code
-             * @description ISO 3166-1 alpha-2 country code. Defaults to `DE`.
+             * @description ISO 3166-1 alpha-2 country code of the address: `DE` or `CH`.
              * @default DE
              */
             country_code: string;
             /**
              * Federal State
-             * @description German federal state (Bundesland).
+             * @description State the address lies in: the Bundesland for a German address, the canton (official name, e.g. `Zug`, `Genève`) for a Swiss one. Read from the address itself, so it can differ from the canton of a Swiss company's register office (`register_canton`). `null` when the address does not determine it.
              */
             federal_state?: string | null;
             /**
@@ -922,10 +944,47 @@ export interface components {
             street?: string | null;
         };
         /**
+         * AddressEntry
+         * @description A business address recorded by one entry.
+         */
+        AddressEntry: {
+            /** @description Business address (Geschäftsanschrift) as of this entry. */
+            address: components["schemas"]["Address"];
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `address_entry`.
+             * @default address_entry
+             * @constant
+             */
+            object: "address_entry";
+        };
+        /**
          * AiInsightsBlock
-         * @description AI-generated insights. Populated only when `expand=ai_insights`.
+         * @description AI-generated insights, derived from one filed annual report.
          */
         AiInsightsBlock: {
+            /**
+             * Based On Fiscal Year
+             * @description Fiscal year of the filing the insights were generated from. Compare it with `financial_summary.latest_fiscal_year`: an outlook written from an older filing describes that year's view.
+             */
+            based_on_fiscal_year?: number | null;
+            /**
+             * Generated At
+             * @description When the insights were generated (UTC).
+             */
+            generated_at?: string | null;
             /**
              * Object
              * @description Discriminator. Always `ai_insights`.
@@ -939,13 +998,55 @@ export interface components {
             summary?: components["schemas"]["LocalizedText"] | null;
         };
         /**
+         * ArticlesEntry
+         * @description Creation or amendment of the articles (Satzung / Gesellschaftsvertrag / Statut).
+         */
+        ArticlesEntry: {
+            /**
+             * Change
+             * @description `created`: the original document; `amended`: a later change.
+             * @enum {string}
+             */
+            change: "created" | "amended";
+            /**
+             * Document Date
+             * @description Date of the document or resolution.
+             */
+            document_date?: string | null;
+            /**
+             * Document Type
+             * @description Document as filed: `Satzung`, `Gesellschaftsvertrag` or `Statut`.
+             * @example Gesellschaftsvertrag
+             */
+            document_type?: string | null;
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `articles_entry`.
+             * @default articles_entry
+             * @constant
+             */
+            object: "articles_entry";
+        };
+        /**
          * AutocompleteHit
          * @description One autocomplete suggestion.
          */
         AutocompleteHit: {
             /**
              * Display Name
-             * @description Best human-readable name to render in the suggestion list.
+             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
              */
             display_name: string;
             /**
@@ -966,8 +1067,14 @@ export interface components {
              */
             object: "autocomplete_hit";
             /**
+             * Register Canton
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German companies.
+             * @example VD
+             */
+            register_canton?: string | null;
+            /**
              * Register Court
-             * @description Name of the registering court (Registergericht).
+             * @description Registering court (Registergericht) for German companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
@@ -978,9 +1085,15 @@ export interface components {
             register_number?: number | null;
             /**
              * Register Type
-             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`).
+             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`).
              */
             register_type?: string | null;
+            /**
+             * Uid
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German companies.
+             * @example CHE-105.909.036
+             */
+            uid?: string | null;
         };
         /**
          * AutocompleteResponse
@@ -1084,6 +1197,151 @@ export interface components {
             public_name?: string | null;
         };
         /**
+         * BoardChange
+         * @description One appointment, departure or correction of an officer or limited partner.
+         */
+        BoardChange: {
+            /**
+             * Change
+             * @description `updated`: the entry corrected the member's data (Geändert, nun).
+             * @enum {string}
+             */
+            change: "appointed" | "departed" | "updated";
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `board_change`.
+             * @default board_change
+             * @constant
+             */
+            object: "board_change";
+            /** @description Organisation, when applicable. */
+            organization?: components["schemas"]["OrganizationRef"] | null;
+            /** @description Natural person, when applicable. */
+            person?: components["schemas"]["Person"] | null;
+            /** @description Representation power, when the entry states it. */
+            representation?: components["schemas"]["BoardRepresentation"] | null;
+            /**
+             * Role
+             * @description Role as filed.
+             * @example Geschäftsführer
+             */
+            role?: string | null;
+        };
+        /**
+         * BoardMember
+         * @description A current officer, from the replay of every appointment and departure.
+         */
+        BoardMember: {
+            /**
+             * Appointed Date
+             * @description Date of the entry that first records this member in the role. For a company whose extract starts with a transfer this is the transfer date, not necessarily the appointment.
+             */
+            appointed_date?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `board_member`.
+             * @default board_member
+             * @constant
+             */
+            object: "board_member";
+            /** @description Organisation holding the role, when applicable. */
+            organization?: components["schemas"]["OrganizationRef"] | null;
+            /** @description Natural person, when applicable. */
+            person?: components["schemas"]["Person"] | null;
+            /** @description Representation power, when the entry states it. */
+            representation?: components["schemas"]["BoardRepresentation"] | null;
+            /**
+             * Role
+             * @description Role as filed.
+             * @example Vorstand
+             */
+            role?: string | null;
+        };
+        /**
+         * BoardRepresentation
+         * @description How a board member may represent the company, as filed.
+         */
+        BoardRepresentation: {
+            /**
+             * Excluded
+             * @description Excluded from representation.
+             * @default false
+             */
+            excluded: boolean;
+            /**
+             * Exempt From Self Dealing Ban
+             * @description Released from the restrictions of § 181 BGB.
+             * @default false
+             */
+            exempt_from_self_dealing_ban: boolean;
+            /**
+             * Joint
+             * @description Represents jointly with another officer or Prokurist.
+             * @default false
+             */
+            joint: boolean;
+            /**
+             * Joint With
+             * @description Who the joint representation is with, when the entry names it.
+             */
+            joint_with?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `board_representation`.
+             * @default board_representation
+             * @constant
+             */
+            object: "board_representation";
+            /**
+             * Sole
+             * @description Authorised to represent the company alone.
+             * @default false
+             */
+            sole: boolean;
+        };
+        /**
+         * BranchEntry
+         * @description The branch offices listed by one entry.
+         */
+        BranchEntry: {
+            /**
+             * Branches
+             * @description Branches (Zweigniederlassungen) as listed by this entry.
+             */
+            branches?: components["schemas"]["HistoryBranch"][];
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `branch_entry`.
+             * @default branch_entry
+             * @constant
+             */
+            object: "branch_entry";
+        };
+        /**
          * Bundesland
          * @enum {string}
          */
@@ -1160,6 +1418,41 @@ export interface components {
             revenue_unit?: string | null;
         };
         /**
+         * CapitalEntry
+         * @description A share-capital figure recorded by one entry.
+         */
+        CapitalEntry: {
+            /** @description Share capital (Stamm-/Grundkapital) after this entry. */
+            amount: components["schemas"]["Money"];
+            /** @description Difference to the previous capital entry. `null` for the first. */
+            change?: components["schemas"]["Money"] | null;
+            /**
+             * Change Type
+             * @description How the capital changed, as the entry describes it.
+             * @enum {string}
+             */
+            change_type: "initial" | "cash_increase" | "contribution_in_kind" | "from_authorized_capital" | "from_conditional_capital" | "decrease" | "unchanged";
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `capital_entry`.
+             * @default capital_entry
+             * @constant
+             */
+            object: "capital_entry";
+        };
+        /**
          * CompanyDetail
          * @description Hero detail profile returned by `GET /v1/companies/{eu_id}`.
          *
@@ -1184,7 +1477,7 @@ export interface components {
             contact: components["schemas"]["ContactBlock"];
             /**
              * Display Name
-             * @description Best human-readable name to use in UIs.
+             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
              */
             display_name: string;
             /**
@@ -1224,13 +1517,19 @@ export interface components {
             /** @description Insolvency, Auflösung and Liquidation snapshot. `null` when the company has no such event on record and is not dissolved. */
             insolvency?: components["schemas"]["InsolvencyBlock"] | null;
             /**
+             * Is Branch
+             * @description `true` when this register entry is a branch office (Zweigniederlassung, succursale) of a company registered elsewhere, not a company of its own — a foreign company's German branch, or a Swiss branch office, which has its own UID.
+             * @default false
+             */
+            is_branch: boolean;
+            /**
              * Latest Register Entry Date
              * @description Date of the most recent register entry observed for this company (XJustiz `letzteEintragung`). `null` when no register entry has yet been observed for this company.
              */
             latest_register_entry_date?: string | null;
             /**
              * Legal Form
-             * @description German legal-form short name (Rechtsform), e.g. `GmbH`, `AG`, `KG`.
+             * @description Legal-form short name (Rechtsform), e.g. `GmbH`, `AG`, `KG`. Swiss legal forms carry a `(CH)` suffix, e.g. `AG (CH)`.
              * @example GmbH
              */
             legal_form?: string | null;
@@ -1239,6 +1538,19 @@ export interface components {
              * @description Full legal name as filed.
              */
             legal_name?: string | null;
+            /**
+             * Legal Status
+             * @description Derived lifecycle status, resolved from the merged Strukturierte-Inhalte, Chronologisches-Datenblatt and Insolvenzbekanntmachungen timelines — the most recent event wins regardless of which source recorded it.
+             *
+             *     `deleted` — company has been removed from the German registries.
+             *     `insolvent` — insolvency proceedings are open or preliminary measures are in force.
+             *     `in_liquidation` — the company is dissolved (Auflösung, whether by shareholder resolution or as a consequence of insolvency) and a Liquidator is in office.
+             *     `dissolved` — dissolved with no Liquidator in office, or an insolvency proceeding that has been lifted (Aufhebung des Verfahrens).
+             *     `active` — default for everything else.
+             * @default active
+             * @enum {string}
+             */
+            legal_status: "active" | "in_liquidation" | "insolvent" | "dissolved" | "deleted";
             /** @description LEI-based ownership graph — parent and direct children when the company has an LEI. `null` when the company has no LEI and no LEI-graph relations are available. */
             lei_graph?: components["schemas"]["LeiGraphBlock"] | null;
             /**
@@ -1254,8 +1566,14 @@ export interface components {
              */
             object: "company";
             /**
+             * Register Canton
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German companies.
+             * @example VD
+             */
+            register_canton?: string | null;
+            /**
              * Register Court
-             * @description Name of the registering court (Registergericht).
+             * @description Registering court (Registergericht) for German companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
@@ -1266,7 +1584,7 @@ export interface components {
             register_number?: number | null;
             /**
              * Register Type
-             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`).
+             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`).
              */
             register_type?: string | null;
             /**
@@ -1274,21 +1592,14 @@ export interface components {
              * @description Registered seat as filed (German, may include district).
              */
             registered_seat?: string | null;
-            /** @description Currently registered share capital (Stammkapital/Grundkapital). */
+            /** @description Currently registered share capital (Stammkapital / Grundkapital), from the structured register extract or, where that carries none, the latest capital entry in the chronological one. `null` when the register states none — partnerships have no share capital. */
             share_capital?: components["schemas"]["Money"] | null;
             /**
-             * Status
-             * @description Derived lifecycle status, resolved from the merged Strukturierte-Inhalte, Chronologisches-Datenblatt and Insolvenzbekanntmachungen timelines — the most recent event wins regardless of which source recorded it.
-             *
-             *     `deleted` — company has been removed from the German registries.
-             *     `insolvent` — insolvency proceedings are open or preliminary measures are in force.
-             *     `in_liquidation` — the company is dissolved (Auflösung, whether by shareholder resolution or as a consequence of insolvency) and a Liquidator is in office.
-             *     `dissolved` — dissolved with no Liquidator in office, or an insolvency proceeding that has been lifted (Aufhebung des Verfahrens).
-             *     `active` — default for everything else.
-             * @default active
-             * @enum {string}
+             * Uid
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German companies.
+             * @example CHE-105.909.036
              */
-            status: "active" | "in_liquidation" | "insolvent" | "dissolved" | "deleted";
+            uid?: string | null;
             /**
              * Ust Id Nr
              * @description VAT identification number (Umsatzsteuer-Identifikationsnummer).
@@ -1320,6 +1631,12 @@ export interface components {
              * @description English display name composed as `"<type label> from <date>"` (e.g. `Shareholder List from 2026-02-17`).
              */
             file_name_en: string;
+            /**
+             * Is Outdated
+             * @description `true` for a register extract (`register_extract_current` / `register_extract_chronological`) older than the company's latest register entry — the extract predates a change the register has since recorded. Pass `fetch_realtime=true` to `/documents/download` for a fresh one. Always `false` for the other document types.
+             * @default false
+             */
+            is_outdated: boolean;
             /**
              * Object
              * @description Discriminator. Always `company_document`.
@@ -1389,6 +1706,12 @@ export interface components {
             /** @description How current the served file is. `last_checked_at` mirrors the parent `updated_at` (the moment firmendata last fetched this document); `realtime_fetching_status` reports the outcome of the realtime attempt for this request — `download_url` still points at the most recent file on record regardless of that outcome. */
             freshness: components["schemas"]["Freshness"];
             /**
+             * Is Outdated
+             * @description `true` for a register extract (`register_extract_current` / `register_extract_chronological`) older than the company's latest register entry — the extract predates a change the register has since recorded. Pass `fetch_realtime=true` to `/documents/download` for a fresh one. Always `false` for the other document types.
+             * @default false
+             */
+            is_outdated: boolean;
+            /**
              * Object
              * @description Discriminator. Always `company_document_download`.
              * @default company_document_download
@@ -1435,19 +1758,19 @@ export interface components {
             /** @description Per-year employee headcount (total / full-time / part-time) sourced from annual Jahresabschluss filings. */
             employee_history: components["schemas"]["EmployeeHistoryBlock"];
             /**
+             * Eu Id
+             * @description firmendata company identifier.
+             */
+            eu_id: string;
+            /**
              * Financial Publications
              * @description Filed annual financial statements (Bilanz files) available for this company: Jahresabschluss, Konzernabschluss, or combined. Sorted by `published_at` descending. Attachments reference the filed PDF — downloads are not exposed in v1.
              */
             financial_publications?: components["schemas"]["FinancialPublication"][];
             /** @description How current the financial filings in this response are. `last_checked_at` is the timestamp at which the company's filings were last successfully fetched and parsed; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
             freshness: components["schemas"]["Freshness"];
-            /** @description Multi-year history: annual top-line metrics plus structured profit-and-loss, assets, and liabilities-and-equity rows from the filings. AI-reconstructed P&L is included for small-company filings that lack a structured statement. */
+            /** @description Multi-year history: annual top-line metrics, plus — with `include=line_items` — the structured profit-and-loss, assets, and liabilities-and-equity rows from the filings. AI-reconstructed P&L is included for small-company filings that lack a structured statement. */
             history: components["schemas"]["FinancialHistoryBlock"];
-            /**
-             * Id
-             * @description firmendata company identifier.
-             */
-            id: string;
             /**
              * Object
              * @description Discriminator. Always `company_financials`.
@@ -1464,67 +1787,78 @@ export interface components {
          * CompanyHistory
          * @description Response model for `GET /v1/companies/{eu_id}/history`.
          *
-         *     Aggregated view of every change ever recorded against a company in
-         *     the Handelsregister, grouped by what was changed (firma, sitz,
-         *     kapital, board, etc.). Lists are oldest-first within each group.
+         *     Everything recorded against a company in the chronological register
+         *     extract (Chronologischer Abdruck), grouped by what changed. Timelines are
+         *     oldest first; dates are ISO 8601 and people use the same `person` shape
+         *     as the company detail.
          */
         CompanyHistory: {
             /**
-             * Board Members
-             * @description Board-member appointments and removals (Geschäftsführer, Vorstand, Prokuristen, Aufsichtsrat). Each entry is a single change — to derive the current board, see `current_board`.
+             * Articles Of Association
+             * @description Creation and amendments of the constitutional document — Satzung, Gesellschaftsvertrag or Statut depending on legal form.
              */
-            board_members?: components["schemas"]["RegisterHistoryEvent"][];
+            articles_of_association?: components["schemas"]["ArticlesEntry"][];
             /**
-             * Company Status
-             * @description Current operating status derived from the timeline (`active`, `dissolved`, `insolvent`, …). `null` when no definitive state can be inferred from the history.
+             * Board Changes
+             * @description Every appointment, departure and correction of an officer (Geschäftsführer, Vorstand, Liquidator, persönlich haftender Gesellschafter) or limited partner.
              */
-            company_status?: string | null;
+            board_changes?: components["schemas"]["BoardChange"][];
+            /**
+             * Branches
+             * @description Branch offices, as listed by each entry that names them.
+             */
+            branches?: components["schemas"]["BranchEntry"][];
+            /**
+             * Business Addresses
+             * @description Business addresses over time.
+             */
+            business_addresses?: components["schemas"]["AddressEntry"][];
+            /**
+             * Business Purposes
+             * @description Business purposes over time.
+             */
+            business_purposes?: components["schemas"]["PurposeEntry"][];
+            coverage: components["schemas"]["HistoryCoverage"];
             /**
              * Current Board
-             * @description Snapshot of currently-active board members, derived by walking every appointment / removal in the timeline. Each item carries `name`, `role`, and any qualifying attributes (e.g. `sole_representation`).
+             * @description Officers in office now, from replaying every appointment, departure and correction in `board_changes`.
              */
-            current_board?: {
-                [key: string]: unknown;
-            }[];
-            /** @description First-ever register entry (founding entry). */
-            erste_eintragung?: components["schemas"]["RegisterHistoryEvent"] | null;
+            current_board?: components["schemas"]["BoardMember"][];
             /**
              * Eu Id
              * @description firmendata company identifier.
              */
             eu_id: string;
-            /**
-             * Firma
-             * @description Company-name (firma) changes over time.
-             */
-            firma?: components["schemas"]["RegisterHistoryEvent"][];
-            /** @description How current the chronological register history is. `last_checked_at` is the timestamp at which the company's Chronologischer Datenauszug (CD) was last successfully fetched; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
+            /** @description The earliest entry of the extract, and whether it is the founding. */
+            first_entry?: components["schemas"]["FirstRegisterEntry"] | null;
+            /** @description How current the chronological register history is. `last_checked_at` is when the company's chronological extract was last fetched; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
             freshness: components["schemas"]["Freshness"];
             /**
-             * Gegenstand
-             * @description Business-purpose (Unternehmensgegenstand) changes over time.
+             * Legal Forms
+             * @description Legal-form changes over time.
              */
-            gegenstand?: components["schemas"]["RegisterHistoryEvent"][];
+            legal_forms?: components["schemas"]["LegalFormEntry"][];
             /**
-             * Geschaeftsanschrift
-             * @description Business-address (Geschäftsanschrift) changes over time.
+             * Legal Status
+             * @description Current legal status derived from the timeline (`active`, `dissolved`, `in_liquidation`, `insolvent`). `null` when the history is not available.
+             * @example active
              */
-            geschaeftsanschrift?: components["schemas"]["RegisterHistoryEvent"][];
-            /**
-             * Kapital
-             * @description Share-capital (Stamm-/Grundkapital) changes over time.
-             */
-            kapital?: components["schemas"]["RegisterHistoryEvent"][];
-            /**
-             * Kommanditisten
-             * @description Limited-partner (Kommanditist) changes — only meaningful for KG-shaped legal forms.
-             */
-            kommanditisten?: components["schemas"]["RegisterHistoryEvent"][];
+            legal_status?: string | null;
             /**
              * Legal Status Events
              * @description Insolvency, Auflösung and Liquidation events, newest first, merged and deduplicated across all three registries. Empty for a company that has never been in insolvency or liquidation.
              */
             legal_status_events?: components["schemas"]["LegalStatusEvent"][];
+            /**
+             * Limited Partners
+             * @description Current limited partners (Kommanditisten). Only KG-shaped legal forms have them.
+             */
+            limited_partners?: components["schemas"]["LimitedPartner"][];
+            /**
+             * Names
+             * @description Company names over time.
+             */
+            names?: components["schemas"]["NameEntry"][];
             /**
              * Object
              * @description Discriminator. Always `company_history`.
@@ -1533,25 +1867,15 @@ export interface components {
              */
             object: "company_history";
             /**
-             * Rechtsform
-             * @description Legal-form (Rechtsform) changes over time.
+             * Seats
+             * @description Registered seats over time.
              */
-            rechtsform?: components["schemas"]["RegisterHistoryEvent"][];
+            seats?: components["schemas"]["SeatEntry"][];
             /**
-             * Satzung Events
-             * @description Articles-of-association amendment entries — covers any change to the company's constitutional document, called Gesellschaftsvertrag / Satzung / Statut in German depending on legal form. The field name `satzung_events` uses the most common German short form.
+             * Share Capital
+             * @description Share capital over time.
              */
-            satzung_events?: components["schemas"]["RegisterHistoryEvent"][];
-            /**
-             * Sitz
-             * @description Registered seat (Sitz) changes over time.
-             */
-            sitz?: components["schemas"]["RegisterHistoryEvent"][];
-            /**
-             * Zweigniederlassungen
-             * @description Branch-office (Zweigniederlassung) openings/closings.
-             */
-            zweigniederlassungen?: components["schemas"]["RegisterHistoryEvent"][];
+            share_capital?: components["schemas"]["CapitalEntry"][];
         };
         /**
          * CompanyListDetailResponse
@@ -1718,7 +2042,7 @@ export interface components {
         };
         /**
          * EmployeeHistoryBlock
-         * @description Multi-year employee history. Populated only when `expand=employee_history`.
+         * @description Multi-year employee history.
          */
         EmployeeHistoryBlock: {
             /**
@@ -1769,17 +2093,20 @@ export interface components {
         };
         /**
          * FinancialHistoryBlock
-         * @description Multi-year financial history. Populated only when `expand=financial_history`.
+         * @description Multi-year financial history.
+         *
+         *     `metrics` is always populated. The three line-item arrays are opt-in:
+         *     they are empty unless the request passes `include=line_items`.
          */
         FinancialHistoryBlock: {
             /**
              * Assets
-             * @description Filed assets-side rows.
+             * @description Filed assets-side rows. Empty unless `include=line_items`.
              */
             assets?: components["schemas"]["FinancialRow"][];
             /**
              * Liabilities And Equity
-             * @description Filed liabilities-and-equity rows.
+             * @description Filed liabilities-and-equity rows. Empty unless `include=line_items`.
              */
             liabilities_and_equity?: components["schemas"]["FinancialRow"][];
             /**
@@ -1796,7 +2123,7 @@ export interface components {
             object: "financial_history";
             /**
              * Profit And Loss
-             * @description Filed profit-and-loss statement rows.
+             * @description Filed profit-and-loss statement rows. Empty unless `include=line_items`.
              */
             profit_and_loss?: components["schemas"]["FinancialRow"][];
         };
@@ -1824,6 +2151,8 @@ export interface components {
              * @constant
              */
             object: "financial_metric";
+            /** @description Other operating income — `sonstige betriebliche Erträge` plus interest and commission income. Reported separately from `revenue`, which counts only Umsatzerlöse. */
+            other_operating_income?: components["schemas"]["Money"] | null;
             /** @description Annual profit for this year. */
             profit?: components["schemas"]["Money"] | null;
             /** @description Annual revenue (Umsatzerlöse) for this year. Null when the company did not publish it — see `size_class`, which says what the omission itself discloses. */
@@ -1970,17 +2299,36 @@ export interface components {
         FinancialSummaryBlock: {
             /**
              * Latest Employee Count
-             * @description Latest reported employee count.
+             * @description Employee count from the most recent year that reports one — see `latest_employee_count_year`.
              */
             latest_employee_count?: number | null;
+            /**
+             * Latest Employee Count Year
+             * @description Year `latest_employee_count` is for.
+             */
+            latest_employee_count_year?: number | null;
             /**
              * Latest Fiscal Year
              * @description Fiscal year of the latest reported figures.
              */
             latest_fiscal_year?: number | null;
-            /** @description Latest reported total assets. */
+            /** @description Annual profit (Jahresüberschuss / Bilanzgewinn) from the most recent fiscal year that reports one — see `latest_profit_year`. */
+            latest_profit?: components["schemas"]["Money"] | null;
+            /**
+             * Latest Profit Year
+             * @description Fiscal year `latest_profit` is for.
+             */
+            latest_profit_year?: number | null;
+            /** @description Revenue (Umsatzerlöse) from the most recent fiscal year that reports one — see `latest_revenue_year`. Small and medium-sized companies file no profit-and-loss statement, so this is often `null`. */
+            latest_revenue?: components["schemas"]["Money"] | null;
+            /**
+             * Latest Revenue Year
+             * @description Fiscal year `latest_revenue` is for.
+             */
+            latest_revenue_year?: number | null;
+            /** @description Total assets reported for `latest_fiscal_year`. */
             latest_total_assets?: components["schemas"]["Money"] | null;
-            /** @description Latest reported total liabilities and equity. */
+            /** @description Total liabilities and equity reported for `latest_fiscal_year`. */
             latest_total_liabilities_and_equity?: components["schemas"]["Money"] | null;
             /**
              * Object
@@ -1989,6 +2337,56 @@ export interface components {
              * @constant
              */
             object: "financial_summary";
+        };
+        /**
+         * FirstRegisterEntry
+         * @description The earliest entry of the chronological extract, and what it records.
+         */
+        FirstRegisterEntry: {
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * First Registered Date
+             * @description Date the company was first entered in a German register (Tag der ersten Eintragung). Earlier than `entry_date` when the extract starts after a court transfer or a digitisation.
+             * @example 1961-04-27
+             */
+            first_registered_date?: string | null;
+            /**
+             * Founding Document Date
+             * @description Date of that document.
+             * @example 1960-07-06
+             */
+            founding_document_date?: string | null;
+            /**
+             * Founding Document Type
+             * @description Constitutional document as filed: `Satzung`, `Gesellschaftsvertrag` or `Statut`.
+             * @example Satzung
+             */
+            founding_document_type?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `first_register_entry`.
+             * @default first_register_entry
+             * @constant
+             */
+            object: "first_register_entry";
+            /**
+             * Origin
+             * @description What the first entry records. `founding`: the company's registration. `transfer`: a move from another register court or a digitisation — earlier entries exist elsewhere. `conversion`: the company arose from an Umwandlung (Formwechsel, Verschmelzung, Spaltung). `charter_predates`: the entry cites an articles of association or contract more than a year older than itself. Only `founding` supports the `founder_profile` verdicts; for the others they are `null`.
+             * @default founding
+             * @enum {string}
+             */
+            origin: "founding" | "transfer" | "conversion" | "charter_predates";
         };
         /**
          * FounderProfileBlock
@@ -2042,7 +2440,7 @@ export interface components {
             founder_count: number;
             /**
              * Founder Led
-             * @description Whether someone holding a role at first registration is still in office. `null` when the chronological extract is missing, or begins with a transfer from another register court — its first entry then records the move, not the founding.
+             * @description Whether someone holding a role at first registration is still in office. `null` when the chronological extract is missing or its first entry is not the founding — a transfer from another register court, an Umwandlung (Formwechsel, Verschmelzung, Spaltung), or an entry citing a far older charter. `founders` is then empty too: the officers on that day are not founders.
              */
             founder_led?: boolean | null;
             /**
@@ -2090,7 +2488,8 @@ export interface components {
             birth_year?: number | null;
             /**
              * Entry Date
-             * @description Date of the first register entry, `DD.MM.YYYY`.
+             * @description Date of the first register entry.
+             * @example 2006-09-20
              */
             entry_date?: string | null;
             /**
@@ -2156,6 +2555,73 @@ export interface components {
              * @enum {string}
              */
             realtime_fetching_status: "success" | "platform_unavailable" | "documents_temporarily_unavailable" | "file_unavailable" | "company_unavailable" | "realtime_fetching_disabled";
+        };
+        /**
+         * HistoryBranch
+         * @description One branch office (Zweigniederlassung) as listed by an entry.
+         */
+        HistoryBranch: {
+            /**
+             * Address
+             * @description Branch address as filed.
+             */
+            address?: string | null;
+            /**
+             * City
+             * @description Branch seat.
+             */
+            city?: string | null;
+            /**
+             * Name
+             * @description Branch name as filed.
+             */
+            name?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `branch`.
+             * @default branch
+             * @constant
+             */
+            object: "branch";
+            /**
+             * Register Court
+             * @description Court registering the branch, if filed.
+             */
+            register_court?: string | null;
+            /**
+             * Register Number
+             * @description Register number of the branch entry.
+             */
+            register_number?: string | null;
+            /**
+             * Register Type
+             * @description Register type of the branch entry.
+             */
+            register_type?: string | null;
+        };
+        /**
+         * HistoryCoverage
+         * @description Whether a chronological register history exists for this company.
+         */
+        HistoryCoverage: {
+            /**
+             * Object
+             * @description Discriminator. Always `history_coverage`.
+             * @default history_coverage
+             * @constant
+             */
+            object: "history_coverage";
+            /**
+             * Reason
+             * @description Customer-safe explanation when `status` is `not_available`.
+             */
+            reason?: string | null;
+            /**
+             * Status
+             * @description `available`: the chronological register extract was parsed and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register publishes none, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). Every timeline is then empty and the call is not charged.
+             * @enum {string}
+             */
+            status: "available" | "not_available";
         };
         /**
          * IndustryBlock
@@ -2247,6 +2713,42 @@ export interface components {
              * @default false
              */
             self_administration: boolean;
+        };
+        /**
+         * LegalFormEntry
+         * @description A change of legal form.
+         */
+        LegalFormEntry: {
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Legal Form
+             * @description Legal form as filed.
+             * @example Aktiengesellschaft
+             */
+            legal_form: string;
+            /**
+             * Object
+             * @description Discriminator. Always `legal_form_entry`.
+             * @default legal_form_entry
+             * @constant
+             */
+            object: "legal_form_entry";
+            /**
+             * Previous Legal Form
+             * @description Legal form before this entry. `null` for the first.
+             */
+            previous_legal_form?: string | null;
         };
         /**
          * LegalStatus
@@ -2343,14 +2845,20 @@ export interface components {
         };
         /**
          * LeiGraphBlock
-         * @description LEI-based ownership graph. Populated only when `expand=lei_graph`.
+         * @description LEI-based ownership graph: the direct parent and direct children.
          */
         LeiGraphBlock: {
             /**
              * Direct Children
-             * @description Direct children in the LEI graph.
+             * @description Direct children in the LEI graph, ordered by legal name. At most 25 — `direct_children_total` says how many there are.
              */
             direct_children?: components["schemas"]["LeiRelative"][];
+            /**
+             * Direct Children Total
+             * @description Number of direct children in the LEI graph, including any beyond the 25 listed in `direct_children`.
+             * @default 0
+             */
+            direct_children_total: number;
             /** @description Direct parent in the LEI graph, when reported. */
             direct_parent?: components["schemas"]["LeiRelative"] | null;
             /**
@@ -2431,6 +2939,44 @@ export interface components {
             relationship: string;
         };
         /**
+         * LimitedPartner
+         * @description A current limited partner (Kommanditist) and the contribution filed.
+         *
+         *     `entry_date` / `entry_number` refer to the partner's most recent change.
+         */
+        LimitedPartner: {
+            /** @description Registered liability contribution (Hafteinlage). */
+            contribution?: components["schemas"]["Money"] | null;
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `limited_partner`.
+             * @default limited_partner
+             * @constant
+             */
+            object: "limited_partner";
+            /** @description Organisation, when applicable. */
+            organization?: components["schemas"]["OrganizationRef"] | null;
+            /** @description Natural person, when applicable. */
+            person?: components["schemas"]["Person"] | null;
+            /**
+             * Share Percent
+             * @description Share of all registered contributions, in percent.
+             */
+            share_percent?: number | null;
+        };
+        /**
          * LocalizedText
          * @description A piece of text rendered in German and/or English.
          */
@@ -2454,11 +3000,10 @@ export interface components {
             object: "localized_text";
             /**
              * Translation Source
-             * @description Provenance of the rendering. `original`: the value as filed; `human`: human translation; `machine`: machine translation; `passthrough`: identical to the source language.
+             * @description Provenance of the English rendering. `original`: the value as filed; `human`: human translation; `machine`: machine translation; `passthrough`: identical to the source language. `null` when there is no English rendering (`en` is `null`).
              * @default original
-             * @enum {string}
              */
-            translation_source: "original" | "human" | "machine" | "passthrough";
+            translation_source: ("original" | "human" | "machine" | "passthrough") | null;
         };
         /**
          * Member
@@ -2521,6 +3066,36 @@ export interface components {
              * @constant
              */
             object: "money";
+        };
+        /**
+         * NameEntry
+         * @description A company name (Firma) registered by one entry.
+         */
+        NameEntry: {
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Name
+             * @description Company name (Firma) as registered by this entry.
+             */
+            name: string;
+            /**
+             * Object
+             * @description Discriminator. Always `name_entry`.
+             * @default name_entry
+             * @constant
+             */
+            object: "name_entry";
         };
         /**
          * NotificationCadence
@@ -2650,7 +3225,7 @@ export interface components {
             previous_cursor?: string | null;
             /**
              * Total Approx
-             * @description Approximate total result count. Capped at 10,000 for `/companies/search`; exact for other list endpoints.
+             * @description Approximate total result count. Capped at 10,000 for `/companies/search`; exact for the lists endpoints; `null` for the subscription listings, which do not count.
              */
             total_approx?: number | null;
             /**
@@ -2755,17 +3330,17 @@ export interface components {
         Problem: {
             /** @description Human-readable explanation specific to this occurrence. */
             detail?: string | null;
-            /** @description Field-level validation failures (only on 422 responses). */
+            /** @description Parameter-level validation failures (only on 422 responses). */
             errors?: {
-                /** @description Machine-readable error code. */
-                code?: string;
-                /** @description Dotted path to the offending field. */
-                path?: string;
+                /** @description What is wrong with it. */
+                message: string;
+                /** @description Name of the offending parameter (dotted for a nested body field). */
+                param: string;
             }[] | null;
             /** @description URI reference identifying the specific occurrence (typically the request path). */
             instance?: string | null;
-            /** @description Echoes the `X-Request-Id` request header, or a server-generated UUID. Use when contacting support. */
-            request_id?: string;
+            /** @description Same value as the `X-Request-Id` response header: the one you sent, or a server-generated id. Quote it when contacting support. */
+            request_id: string;
             /**
              * @description HTTP status code.
              * @example 422
@@ -2784,6 +3359,36 @@ export interface components {
             type: string;
         };
         /**
+         * PurposeEntry
+         * @description A business purpose recorded by one entry.
+         */
+        PurposeEntry: {
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `purpose_entry`.
+             * @default purpose_entry
+             * @constant
+             */
+            object: "purpose_entry";
+            /**
+             * Purpose
+             * @description Business purpose (Unternehmensgegenstand) as of this entry.
+             */
+            purpose: string;
+        };
+        /**
          * Rechtsform
          * @enum {string}
          */
@@ -2793,42 +3398,6 @@ export interface components {
          * @enum {string}
          */
         RegisterCourt: "Aachen" | "Ahaus" | "Amberg" | "Ansbach" | "Arnsberg" | "Aschaffenburg" | "Augsburg" | "Aurich" | "Bad Hersfeld" | "Bad Homburg v.d.H." | "Bad Kreuznach" | "Bad Oeynhausen" | "Bamberg" | "Bayreuth" | "Berlin (Charlottenburg)" | "Bielefeld" | "Bocholt" | "Bochum" | "Bonn" | "Borken" | "Braunschweig" | "Bremen" | "Bremerhaven" | "Chemnitz" | "Coburg" | "Coesfeld" | "Cottbus" | "Darmstadt" | "Deggendorf" | "Dortmund" | "Dresden" | "Duisburg" | "Dülmen" | "Düren" | "Düsseldorf" | "Eschwege" | "Essen" | "Flensburg" | "Frankfurt am Main" | "Frankfurt/Oder" | "Freiburg" | "Friedberg" | "Fritzlar" | "Fulda" | "Fürth" | "Gelsenkirchen" | "Gießen" | "Gronau" | "Göttingen" | "Gütersloh" | "Hagen" | "Hamburg" | "Hamm" | "Hanau" | "Hannover" | "Hildesheim" | "Hof" | "Homburg" | "Ingolstadt" | "Iserlohn" | "Jena" | "Kaiserslautern" | "Kassel" | "Kempten (Allgäu)" | "Kerpen" | "Kiel" | "Kleve" | "Koblenz" | "Korbach" | "Krefeld" | "Köln" | "Königstein" | "Landau" | "Landshut" | "Langenfeld" | "Lebach" | "Leipzig" | "Lemgo" | "Limburg" | "Ludwigshafen a.Rhein (Ludwigshafen)" | "Lübeck" | "Lüdinghausen" | "Lüneburg" | "Mainz" | "Mannheim" | "Marburg" | "Memmingen" | "Merzig" | "Montabaur" | "Mönchengladbach" | "München" | "Münster" | "Neubrandenburg" | "Neunkirchen" | "Neuruppin" | "Neuss" | "Nürnberg" | "Offenbach am Main" | "Oldenburg (Oldenburg)" | "Osnabrück" | "Ottweiler" | "Paderborn" | "Passau" | "Pinneberg" | "Potsdam" | "Recklinghausen" | "Regensburg" | "Rostock" | "Saarbrücken" | "Saarlouis" | "Schleiden" | "Schweinfurt" | "Schwerin" | "Siegburg" | "Siegen" | "St. Ingbert (St Ingbert)" | "St. Wendel (St Wendel)" | "Stadthagen" | "Steinfurt" | "Stendal" | "Stralsund" | "Straubing" | "Stuttgart" | "Tostedt" | "Traunstein" | "Ulm" | "Völklingen" | "Walsrode" | "Weiden i. d. OPf." | "Wetzlar" | "Wiesbaden" | "Wittlich" | "Wuppertal" | "Würzburg" | "Zweibrücken";
-        /**
-         * RegisterHistoryEvent
-         * @description One entry in the chronological register timeline.
-         *
-         *     ``entry_date`` is the German DD.MM.YYYY format the registry
-         *     publishes; consumers that want a parsed date should split on
-         *     ``"."``. ``data`` is the raw aggregated record — its keys depend
-         *     on which timeline this event belongs to (firma vs. kapital vs.
-         *     board, etc.).
-         */
-        RegisterHistoryEvent: {
-            /**
-             * Data
-             * @description Aggregated record body. Keys vary by category — e.g. firma events carry `firma`/`prev_firma`; kapital events carry `kapital`/`waehrung`; board events carry `name`/`role`/`action`. See the API guide for the full per-category schema.
-             */
-            data?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Entry Date
-             * @description Date of the register entry in DD.MM.YYYY (the format the Handelsregister publishes). `null` for entries the parser could not date-stamp.
-             */
-            entry_date?: string | null;
-            /**
-             * Entry Number
-             * @description Numbered position of this entry in the chronological register (laufende Nummer der Eintragung).
-             */
-            entry_number?: number | null;
-            /**
-             * Object
-             * @description Discriminator. Always `register_history_event`.
-             * @default register_history_event
-             * @constant
-             */
-            object: "register_history_event";
-        };
         /**
          * RegisterType
          * @enum {string}
@@ -2895,7 +3464,7 @@ export interface components {
         };
         /**
          * RelationshipsBlock
-         * @description Parent + subsidiaries graph. Populated only when `expand=relationships`.
+         * @description Parent + subsidiaries reported in consolidated financial filings.
          */
         RelationshipsBlock: {
             /**
@@ -2909,9 +3478,15 @@ export interface components {
             parent_company?: components["schemas"]["RelatedCompany"] | null;
             /**
              * Subsidiaries
-             * @description Reported subsidiaries.
+             * @description Reported subsidiaries, ordered by name. At most 25 — `subsidiaries_total` says how many there are.
              */
             subsidiaries?: components["schemas"]["RelatedCompany"][];
+            /**
+             * Subsidiaries Total
+             * @description Number of reported subsidiaries, including any beyond the 25 listed in `subsidiaries`.
+             * @default 0
+             */
+            subsidiaries_total: number;
         };
         /**
          * SearchHit
@@ -2927,7 +3502,7 @@ export interface components {
             cpv_award_codes?: string[];
             /**
              * Display Name
-             * @description Best human-readable name to use in UIs.
+             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
              */
             display_name: string;
             /**
@@ -2956,13 +3531,19 @@ export interface components {
              */
             founded_at?: string | null;
             /**
+             * Is Branch
+             * @description `true` when this register entry is a branch office (Zweigniederlassung, succursale) of a company registered elsewhere, not a company of its own. Same rule as `CompanyDetail.is_branch`.
+             * @default false
+             */
+            is_branch: boolean;
+            /**
              * Legal Name
              * @description Full legal name as filed.
              */
             legal_name: string;
             /**
              * Legal Status
-             * @description Lifecycle status, resolved from the merged Handelsregister (SI + CD) and Insolvenzbekanntmachungen timelines. Same vocabulary as `CompanyDetail.status` and the `legal_status` search filter.
+             * @description Lifecycle status, resolved from the merged Handelsregister (SI + CD) and Insolvenzbekanntmachungen timelines. Same vocabulary as `CompanyDetail.legal_status` and the `legal_status` search filter.
              * @default active
              * @enum {string}
              */
@@ -2985,8 +3566,14 @@ export interface components {
              */
             profit_year?: number | null;
             /**
+             * Register Canton
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German companies.
+             * @example VD
+             */
+            register_canton?: string | null;
+            /**
              * Register Court
-             * @description Name of the registering court (Registergericht).
+             * @description Registering court (Registergericht) for German companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
@@ -2997,7 +3584,7 @@ export interface components {
             register_number?: number | null;
             /**
              * Register Type
-             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`).
+             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`).
              */
             register_type?: string | null;
             /**
@@ -3021,6 +3608,12 @@ export interface components {
              */
             total_assets_year?: number | null;
             /**
+             * Uid
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German companies.
+             * @example CHE-105.909.036
+             */
+            uid?: string | null;
+            /**
              * Website
              * @description Primary web domain associated with the company.
              */
@@ -3038,7 +3631,7 @@ export interface components {
             data?: components["schemas"]["SearchHit"][];
             /**
              * Execution Time Ms
-             * @description Server-side query execution time in milliseconds.
+             * @description Server-side query execution time in whole milliseconds.
              */
             execution_time_ms?: number | null;
             /**
@@ -3059,6 +3652,36 @@ export interface components {
             object: "list";
             /** @description Pagination metadata for this page. */
             pagination?: components["schemas"]["PaginationInfo"];
+        };
+        /**
+         * SeatEntry
+         * @description A registered seat (Sitz) recorded by one entry.
+         */
+        SeatEntry: {
+            /**
+             * Entry Date
+             * @description Date of the register entry. `null` when the entry carries no date.
+             * @example 2021-07-15
+             */
+            entry_date?: string | null;
+            /**
+             * Entry Number
+             * @description Running number of the register entry (laufende Nummer der Eintragung).
+             * @example 124
+             */
+            entry_number?: number | null;
+            /**
+             * Object
+             * @description Discriminator. Always `seat_entry`.
+             * @default seat_entry
+             * @constant
+             */
+            object: "seat_entry";
+            /**
+             * Seat
+             * @description Registered seat (Sitz) as of this entry.
+             */
+            seat: string;
         };
         /**
          * Shareholder
@@ -3548,10 +4171,10 @@ export interface components {
         /** SubscriptionEventList */
         SubscriptionEventList: {
             /**
-             * Items
+             * Data
              * @description Events for the subscription, newest first.
              */
-            items?: components["schemas"]["SubscriptionEvent"][];
+            data?: components["schemas"]["SubscriptionEvent"][];
             /**
              * Object
              * @description Discriminator. Always `list`.
@@ -3559,6 +4182,8 @@ export interface components {
              * @constant
              */
             object: "list";
+            /** @description Pagination metadata for this page. */
+            pagination?: components["schemas"]["PaginationInfo"];
         };
         /**
          * SubscriptionEventResendResponse
@@ -3678,10 +4303,10 @@ export interface components {
         /** SubscriptionList */
         SubscriptionList: {
             /**
-             * Items
-             * @description Subscriptions owned by the calling user.
+             * Data
+             * @description Subscriptions owned by the calling user, newest first.
              */
-            items?: components["schemas"]["Subscription"][];
+            data?: components["schemas"]["Subscription"][];
             /**
              * Object
              * @description Discriminator. Always `list`.
@@ -3689,6 +4314,8 @@ export interface components {
              * @constant
              */
             object: "list";
+            /** @description Pagination metadata for this page. */
+            pagination?: components["schemas"]["PaginationInfo"];
         };
         /**
          * SubscriptionMode
@@ -4189,7 +4816,8 @@ export interface components {
             object: "wz_2025_score";
             /**
              * Score
-             * @description Confidence score in [0, 1] for this classification.
+             * @description Classifier confidence for this code, from 0 (none) to 1 (certain), rounded to three decimals. Meaningful for ranking a company's candidate codes against each other; not calibrated as a probability.
+             * @example 0.157
              */
             score?: number | null;
             /**
@@ -4226,6 +4854,8 @@ export interface operations {
             /** @description Suggestion hits ordered by match relevance. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4259,15 +4889,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -4339,7 +4965,7 @@ export interface operations {
                 eu_id?: string | null;
                 /** @description Maximum number of hits to return per page. Hard upper bound is 50. */
                 limit?: number;
-                /** @description Opaque pagination cursor. Pass the `pagination.next_cursor` from a previous response to fetch the next page. */
+                /** @description Opaque pagination cursor. Pass the `pagination.next_cursor` (or `previous_cursor`) from a previous response unchanged; a cursor that was not issued by this endpoint is rejected with `422`. */
                 cursor?: string | null;
                 /** @description Field to order results by. Defaults to keyword-match relevance when `q` is given, otherwise `revenue` descending. Companies missing the value always sort last, whichever direction is chosen. `total_assets` ranks far more companies than `revenue` does — see the filter notes on those two. */
                 sort?: components["schemas"]["Sort"] | null;
@@ -4469,6 +5095,8 @@ export interface operations {
             /** @description Page of search hits with pagination, echoed filters, and execution time. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4502,15 +5130,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -4589,6 +5213,8 @@ export interface operations {
             /** @description The company's detail profile. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4641,15 +5267,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -4732,6 +5354,8 @@ export interface operations {
             /** @description Document metadata plus a 1-day presigned download URL. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4784,15 +5408,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -4855,7 +5475,12 @@ export interface operations {
     };
     getCompanyFinancials: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opt-in blocks. `line_items` adds the structured profit-and-loss, assets and liabilities-and-equity rows to `history` — by far the largest part of the response. */
+                include?: "line_items"[] | null;
+                /** @description Only the N most recent fiscal years in each per-year array (metrics, line items, employee series, filings). Omit for the full history. */
+                years?: number | null;
+            };
             header?: never;
             path: {
                 /** @description firmendata company identifier (also referred to as `eu_id`). */
@@ -4868,6 +5493,8 @@ export interface operations {
             /** @description Aggregated and historic financial data for the company. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4920,15 +5547,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5007,6 +5630,8 @@ export interface operations {
             /** @description Chronological register history grouped by category. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -5059,15 +5684,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5146,6 +5767,8 @@ export interface operations {
             /** @description Current cap table with coverage status. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -5198,15 +5821,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5285,6 +5904,8 @@ export interface operations {
             /** @description UBO graph plus beneficial-owner roll-up. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -5337,15 +5958,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5418,6 +6035,8 @@ export interface operations {
             /** @description The caller's lists. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -5451,15 +6070,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5544,6 +6159,8 @@ export interface operations {
             /** @description One page of the list's companies. */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -5596,15 +6213,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5674,7 +6287,11 @@ export interface operations {
                 subscription_type?: components["schemas"]["SubscriptionType"] | null;
                 /** @description Filter by `recurring` or `one_time`. */
                 mode?: components["schemas"]["SubscriptionMode"] | null;
+                /** @description Subscriptions per page. */
                 limit?: number;
+                /** @description Opaque pagination cursor from `pagination.next_cursor`. */
+                cursor?: string | null;
+                /** @description Rows to skip. Prefer `cursor`; the two cannot be combined. */
                 offset?: number;
             };
             header?: never;
@@ -5686,6 +6303,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -5719,15 +6338,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5804,6 +6419,8 @@ export interface operations {
             /** @description Successful Response */
             201: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -5875,15 +6492,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -5958,6 +6571,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6010,15 +6625,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -6093,6 +6704,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6145,15 +6758,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -6230,6 +6839,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6263,15 +6874,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -6346,6 +6953,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6398,15 +7007,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -6481,6 +7086,8 @@ export interface operations {
             /** @description Successful Response */
             204: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -6531,15 +7138,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
@@ -6603,7 +7206,11 @@ export interface operations {
     listEvents: {
         parameters: {
             query?: {
+                /** @description Events per page. */
                 limit?: number;
+                /** @description Opaque pagination cursor from `pagination.next_cursor`. */
+                cursor?: string | null;
+                /** @description Rows to skip. Prefer `cursor`; the two cannot be combined. */
                 offset?: number;
             };
             header?: never;
@@ -6617,6 +7224,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6669,15 +7278,11 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "One or more query parameters are invalid.",
+                     *       "detail": "limit: Input should be less than or equal to 50",
                      *       "errors": [
                      *         {
-                     *           "code": "less_than_or_equal",
-                     *           "path": "limit"
-                     *         },
-                     *         {
-                     *           "code": "enum_mismatch",
-                     *           "path": "wz_2025_code"
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",

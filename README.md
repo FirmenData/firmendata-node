@@ -45,7 +45,7 @@ const fd = new FirmenData({ apiKey: process.env.FIRMENDATA_API_KEY });
 
 ## Search the register
 
-The main entry point: 37 filters over all 2.4 million companies. Different
+The main entry point: 41 filters over all 2.4 million companies. Different
 filters combine with AND, repeated values with OR.
 
 ```ts
@@ -66,6 +66,11 @@ if (results.pagination.has_more) {
   const next = await fd.search({ cursor: results.pagination.next_cursor });
 }
 ```
+
+Pass `next_cursor` back unchanged — cursors are opaque and signed, and an
+edited one is rejected. Unknown filter names, unknown values and inverted
+ranges (`revenue_min` above `revenue_max`) raise `ValidationError` instead of
+being ignored.
 
 Values are case-insensitive and tolerate German spelling both ways — `gmbh`,
 `muenchen`, `NRW` and `Bavaria` all resolve. Filter by legal form, legal
@@ -108,9 +113,17 @@ for (const year of history.metrics) {
 }
 ```
 
-`history` also carries the structured `profit_and_loss`, `assets` and
-`liabilities_and_equity` rows as filed, plus `employee_history` and the
-underlying `financial_publications`.
+The response is lean by default. The structured `profit_and_loss`, `assets`
+and `liabilities_and_equity` rows as filed are opt-in, and `years` trims every
+per-year array to the most recent fiscal years:
+
+```ts
+const full = await fd.getFinancials(euId, { includeLineItems: true, years: 5 });
+```
+
+`employee_history` and the underlying `financial_publications` are always
+included; `relationships.subsidiaries` lists the first 25, with
+`subsidiaries_total` for the count.
 
 `summary` is `null` when nothing is on file. Within it, figures resolve to the
 most recent filing that actually carries each one, so revenue and profit can
@@ -220,7 +233,7 @@ try {
 | `InsufficientCreditsError`               | 402    | Balance too low for this call                              |
 | `NotFoundError`                          | 404    | No such company, subscription or event                     |
 | `ConflictError`                          | 409    | Conflicts with existing state                              |
-| `ValidationError`                        | 422    | Bad parameters — see `.errors`                             |
+| `ValidationError`                        | 422    | Bad parameters — see `.errors` (`{ param, message }[]`)    |
 | `RateLimitError`                         | 429    | Retry budget exhausted — see `.retryAfter`                 |
 | `ServerError`                            | 5xx    | Retried automatically for idempotent calls                 |
 | `APIConnectionError` / `APITimeoutError` | —      | No response at all                                         |

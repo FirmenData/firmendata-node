@@ -9,9 +9,13 @@
  *   "title":  "Insufficient credits.",
  *   "status": 402,
  *   "detail": "Your credit balance is too low for this request.",
+ *   "instance": "/v1/companies/DEF1103R.HRB279792B/ubo",
  *   "request_id": "8e510d86-..."
  * }
  * ```
+ *
+ * A 422 adds `errors: [{ param, message }]`, one entry per offending
+ * parameter.
  *
  * The subclass is chosen by the `type` slug rather than the status code: the
  * slug is the stable part of the contract, and one status can cover several
@@ -22,6 +26,12 @@
  * libraries fail the same way.
  */
 
+/** One offending parameter of a 422. */
+export interface ValidationIssue {
+  param: string;
+  message: string;
+}
+
 export interface Problem {
   type?: string;
   title?: string;
@@ -29,7 +39,7 @@ export interface Problem {
   detail?: string;
   instance?: string;
   request_id?: string;
-  errors?: Array<Record<string, unknown>>;
+  errors?: ValidationIssue[];
 }
 
 export class FirmenDataError extends Error {
@@ -56,8 +66,8 @@ export class APIError extends FirmenDataError {
   readonly detail?: string;
   readonly instance?: string;
   readonly requestId?: string;
-  /** Per-field validation failures. Only populated on 422. */
-  readonly errors: Array<Record<string, unknown>>;
+  /** Per-parameter validation failures. Only populated on 422. */
+  readonly errors: ValidationIssue[];
   readonly headers: Record<string, string>;
 
   constructor(
