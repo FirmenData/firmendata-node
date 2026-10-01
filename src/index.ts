@@ -1,6 +1,6 @@
 /**
  * Official TypeScript/JavaScript client for the firmendata
- * German company-data API.
+ * German and Swiss company-data API.
  *
  * Autocomplete is free and needs no API key:
  *

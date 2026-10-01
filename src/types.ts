@@ -37,6 +37,7 @@ export type CompanyFinancials = ResponseOf<Get<'/v1/companies/{eu_id}/financials
 export type ShareholdersReport = ResponseOf<Get<'/v1/companies/{eu_id}/shareholders'>>;
 export type UboReport = ResponseOf<Get<'/v1/companies/{eu_id}/ubo'>>;
 export type CompanyHistory = ResponseOf<Get<'/v1/companies/{eu_id}/history'>>;
+export type CompanyDocumentList = ResponseOf<Get<'/v1/companies/{eu_id}/documents'>>;
 export type CompanyDocumentDownload = ResponseOf<
   Get<'/v1/companies/{eu_id}/documents/download'>
 >;

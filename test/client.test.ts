@@ -19,6 +19,7 @@ import {
   ValidationError,
 } from '../src/index.js';
 import { backoffMs, shouldRetry } from '../src/retry.js';
+import type { CompanyDocumentList } from '../src/index.js';
 
 function problem(slug: string, status: number, extra: Record<string, unknown> = {}) {
   return {
@@ -88,12 +89,68 @@ describe('request shaping', () => {
     expect(url.searchParams.getAll('city')).toEqual(['Berlin', 'Hamburg']);
   });
 
+  it('serialises country, canton and Swiss legal-form filters', async () => {
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, { data: [] }));
+    await client.search({
+      country: 'CH',
+      canton: ['ZH', 'BE'],
+      bundesland: ['Bayern'],
+      rechtsform: ['AG (CH)', 'GmbH (CH)'],
+      sort: 'name',
+    });
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.searchParams.getAll('country')).toEqual(['CH']);
+    expect(url.searchParams.getAll('canton')).toEqual(['ZH', 'BE']);
+    expect(url.searchParams.getAll('bundesland')).toEqual(['Bayern']);
+    expect(url.searchParams.getAll('rechtsform')).toEqual(['AG (CH)', 'GmbH (CH)']);
+    expect(url.searchParams.get('sort')).toBe('name');
+  });
+
   it('omits undefined parameters', async () => {
     const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}), { apiKey: 'k' });
     await client.downloadDocument('DE1', { fileType: 'Bilanz' });
     const url = new URL(String(fetchSpy.mock.calls[0]![0]));
     expect(url.searchParams.has('file_id')).toBe(false);
+    expect(url.searchParams.has('document_id')).toBe(false);
+    expect(url.searchParams.has('fetch_realtime')).toBe(false);
     expect(url.searchParams.get('file_type')).toBe('Bilanz');
+  });
+
+  it('downloads a specific document version with its matching file type', async () => {
+    const body = {
+      document_id: 'doc_123',
+      label: 'Liste der Gesellschafter vom 2024-01-15',
+      download_url: 'https://example.com/document.pdf',
+    };
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, body));
+    const result = await client.downloadDocument('DE B/1103', {
+      fileType: 'shareholder_list',
+      documentId: 'doc_123',
+    });
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.pathname).toBe('/v1/companies/DE%20B%2F1103/documents/download');
+    expect(url.searchParams.get('file_type')).toBe('shareholder_list');
+    expect(url.searchParams.get('document_id')).toBe('doc_123');
+    expect(url.searchParams.has('file_id')).toBe(false);
+    expect(url.searchParams.has('fetch_realtime')).toBe(false);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe('GET');
+    expect(result).toEqual(body);
+    expect(result.document_id).toBe('doc_123');
+    expect(result.label).toBe(body.label);
+  });
+
+  it('still accepts file IDs and realtime document downloads', async () => {
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}));
+    await client.downloadDocument('DE1', {
+      fileType: 'register_extract_current',
+      fileId: 'file_123',
+      fetchRealtime: true,
+    });
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.searchParams.get('file_type')).toBe('register_extract_current');
+    expect(url.searchParams.get('file_id')).toBe('file_123');
+    expect(url.searchParams.get('fetch_realtime')).toBe('true');
+    expect(url.searchParams.has('document_id')).toBe(false);
   });
 
   it('serialises booleans as true/false', async () => {
@@ -107,6 +164,76 @@ describe('request shaping', () => {
     const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}), { apiKey: 'k' });
     await client.getCompany('DE B/1103');
     expect(String(fetchSpy.mock.calls[0]![0])).toContain('DE%20B%2F1103');
+  });
+});
+
+describe('document lists', () => {
+  it('lists live documents and older versions with their metadata', async () => {
+    const body: CompanyDocumentList = {
+      object: 'company_document_list',
+      eu_id: 'DE B/1103',
+      country_code: 'DE',
+      coverage: { object: 'documents_coverage', status: 'available' },
+      freshness: {
+        object: 'freshness',
+        last_checked_at: '2026-10-01T12:00:00Z',
+        realtime_fetching_status: 'success',
+      },
+      data: [
+        {
+          object: 'company_document_listing',
+          document_id: null,
+          type: 'register_extract_current',
+          type_label_de: 'Aktueller Abdruck',
+          type_label_en: 'Current Register Extract',
+          label: null,
+          document_date: null,
+          published_at: null,
+          is_latest: true,
+          stored: true,
+          file_id: 'file_456',
+          fetched_at: '2026-09-30T12:00:00Z',
+          is_outdated: true,
+        },
+        {
+          object: 'company_document_listing',
+          document_id: 'doc_123',
+          type: 'shareholder_list',
+          type_label_de: 'Liste der Gesellschafter',
+          type_label_en: 'Shareholder List',
+          label: 'Liste der Gesellschafter vom 2024-01-15',
+          document_date: '2024-01-15',
+          published_at: '2024-01-16',
+          is_latest: false,
+          stored: false,
+          file_id: null,
+          fetched_at: null,
+          is_outdated: false,
+        },
+      ],
+    };
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, body), { apiKey: 'k' });
+    const result: CompanyDocumentList = await client.listDocuments(body.eu_id);
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.pathname).toBe('/v1/companies/DE%20B%2F1103/documents');
+    expect(url.search).toBe('');
+    const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe('GET');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer k' });
+    expect(result).toEqual(body);
+  });
+
+  it('returns an empty Swiss catalog with coverage and freshness', async () => {
+    const body: CompanyDocumentList = {
+      object: 'company_document_list',
+      eu_id: 'CHE123456789',
+      country_code: 'CH',
+      coverage: { object: 'documents_coverage', status: 'not_applicable' },
+      freshness: { object: 'freshness', realtime_fetching_status: 'file_unavailable' },
+      data: [],
+    };
+    const { client } = clientWith(() => jsonResponse(200, body));
+    expect(await client.listDocuments(body.eu_id)).toEqual(body);
   });
 });
 

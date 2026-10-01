@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0
+
+Regenerated from API contract 1.2.0. Additive, non-breaking:
+
+- Company profiles, search/list rows and autocomplete hits now require
+  `country_code` (`DE` or `CH`). Search hits also include `registered_seat`.
+- Search accepts a single `country` and multiple Swiss `canton` codes,
+  OR-merged with `bundesland`; `rechtsform` includes Swiss legal forms such
+  as `AG (CH)` and `GmbH (CH)`. `sort=name` defaults to ascending.
+- `listDocuments(euId)` returns `CompanyDocumentList` from a live registry
+  check, including older DK versions, document IDs, labels, dates, latest
+  and stored flags, file IDs, fetch timestamps and outdated flags, plus
+  `coverage`, `freshness` and `country_code`. Costs 5 credits; Swiss, empty
+  and registry-unreachable responses are unbilled.
+- `downloadDocument()` accepts `documentId` for a specific DK version with
+  a matching `fileType`. It cannot be combined with `fileId` or
+  `fetchRealtime: true`. Responses include `document_id` and `label`.
+
 ## 1.0.0
 
 Regenerated from API contract 1.1.0. **Breaking:**
