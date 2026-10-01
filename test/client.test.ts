@@ -106,6 +106,18 @@ describe('request shaping', () => {
     expect(url.searchParams.get('sort')).toBe('name');
   });
 
+  it('serialises micro companies alongside the existing size filters', async () => {
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, { data: [] }));
+    await client.search({ company_size: ['kleinst', 'klein', 'mittelgross'] });
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.pathname).toBe('/v1/companies/search');
+    expect(url.searchParams.getAll('company_size')).toEqual([
+      'kleinst',
+      'klein',
+      'mittelgross',
+    ]);
+  });
+
   it('omits undefined parameters', async () => {
     const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}), { apiKey: 'k' });
     await client.downloadDocument('DE1', { fileType: 'Bilanz' });

@@ -2169,17 +2169,18 @@ export interface components {
         };
         /**
          * CompanySize
-         * @description Statutory size class under § 267 HGB, read from the filing's own form.
+         * @description Statutory size class under § 267 / § 267a HGB, read from the filing.
          *
          *     A class is assigned only where the company claimed a size-dependent
          *     relief, which is an assertion of being at most that size. Publishing more
-         *     than required is permitted at every size and asserts nothing, so a company
-         *     filing a full profit-and-loss statement carries no class — for those the
-         *     reported revenue is the answer. The values are therefore not exhaustive,
-         *     and selecting both is a real filter rather than a no-op.
+         *     than required is permitted at every size and asserts nothing, so a full
+         *     profit-and-loss statement alone establishes no class — for those the
+         *     reported revenue is the answer. Micro companies may declare their class
+         *     in the notes (Anhang). The values are therefore not exhaustive,
+         *     and selecting all is a real filter rather than a no-op.
          * @enum {string}
          */
-        CompanySize: "klein" | "mittelgross";
+        CompanySize: "kleinst" | "klein" | "mittelgross";
         /**
          * ContactBlock
          * @description Contact/web-presence block. Populated only when `expand=contact`.
@@ -5246,12 +5247,13 @@ export interface operations {
                  */
                 legal_status?: components["schemas"]["LegalStatus"][] | null;
                 /**
-                 * @description Statutory size class under § 267 HGB. Multi-valued.
+                 * @description Statutory size class under § 267 / § 267a HGB. Multi-valued.
                  *
+                 *     - `kleinst` — Kleinstkapitalgesellschaft (§ 267a)
                  *     - `klein` — kleine Kapitalgesellschaft (§ 267 Abs. 1)
                  *     - `mittelgross` — mittelgroße Kapitalgesellschaft (§ 267 Abs. 2)
                  *
-                 *     Read from the form of the filing itself: a company that omits its profit-and-loss statement (§ 326 Abs. 1) or collapses it into a Rohergebnis (§ 276) is claiming a relief only a company of that size may claim. Publishing *more* than required is permitted at every size and asserts nothing, so companies that file a full P&L carry no class — for those the reported `revenue` is the answer. The values are therefore not exhaustive, and selecting both is a real filter meaning "the filing form implies a size class", not a no-op the way selecting every `legal_status` is. `gross` is not offered because no relief can assert largeness: the company that claims nothing is exactly the large one.
+                 *     Read from the filing's form or a declaration in its notes (Anhang): a company that omits its profit-and-loss statement (§ 326 Abs. 1) or collapses it into a Rohergebnis (§ 276) is claiming a relief only a company of that size may claim. Publishing *more* than required is permitted at every size and asserts nothing, so a full P&L alone establishes no class — for those the reported `revenue` is the answer. The values are therefore not exhaustive, and selecting all is a real filter meaning "the filing form implies a size class", not a no-op the way selecting every `legal_status` is. `gross` is not offered because no relief can assert largeness: the company that claims nothing is exactly the large one.
                  *
                  *     Because the § 267 test is "does not exceed at least two of three" (balance-sheet total, revenue, employees), a class on its own does not bound revenue — it does so only where a second criterion is already over its limit. This filter is a size filter, not a revenue filter.
                  */
