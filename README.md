@@ -90,6 +90,10 @@ const swiss = await fd.search({ country: 'CH', canton: ['ZH', 'BE'], sort: 'name
 autocomplete hits include `country_code` (`'DE'` or `'CH'`); search hits also
 include `registered_seat`.
 
+`company_size` accepts `['kleinst', 'klein', 'mittelgross']` under § 267 / § 267a
+HGB. Use `company_size: ['kleinst']` for micro companies
+(Kleinstkapitalgesellschaften, § 267a HGB).
+
 > **Filtering on size? Use `total_assets`, not `revenue`.** Small and
 > medium-sized German companies file abridged accounts — a balance sheet, but
 > no profit-and-loss statement and no headcount. A revenue or employee bound
