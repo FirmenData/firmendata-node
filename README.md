@@ -1,8 +1,8 @@
 # firmendata
 
 Official TypeScript/JavaScript client for the [firmendata](https://firmendata.com)
-API — data on **2.4 million German companies** from the Unternehmensregister and
-Handelsregister: register search, parsed annual financial statements, company
+API — German and Swiss company data from the Unternehmensregister,
+Handelsregister and Swiss commercial register: register search, parsed annual financial statements, company
 profiles, register documents, and ownership chains for KYC.
 
 [![npm](https://img.shields.io/npm/v/firmendata)](https://www.npmjs.com/package/firmendata)
@@ -45,8 +45,8 @@ const fd = new FirmenData({ apiKey: process.env.FIRMENDATA_API_KEY });
 
 ## Search the register
 
-The main entry point: 41 filters over all 2.4 million companies. Different
-filters combine with AND, repeated values with OR.
+The main entry point for German and Swiss companies. Different filters
+combine with AND, repeated values with OR.
 
 ```ts
 const results = await fd.search({
@@ -77,6 +77,18 @@ Values are case-insensitive and tolerate German spelling both ways — `gmbh`,
 status, register court, federal state, city, industry, founding date, size,
 web presence, connected person or EU public-procurement role; see the
 [filter reference](https://api.firmendata.com/v1/docs#tag/Search).
+
+Use `country: 'DE'` or `'CH'` for a single country and `canton: ['ZH', 'BE']`
+for Swiss cantons. `canton` and `bundesland` combine with OR; `rechtsform`
+also accepts Swiss forms such as `'AG (CH)'` and `'GmbH (CH)'`.
+
+```ts
+const swiss = await fd.search({ country: 'CH', canton: ['ZH', 'BE'], sort: 'name' });
+```
+
+`sort: 'name'` defaults to ascending. Company profiles, search/list rows and
+autocomplete hits include `country_code` (`'DE'` or `'CH'`); search hits also
+include `registered_seat`.
 
 > **Filtering on size? Use `total_assets`, not `revenue`.** Small and
 > medium-sized German companies file abridged accounts — a balance sheet, but
@@ -133,11 +145,34 @@ computing a ratio.
 ## Documents
 
 ```ts
-const doc = await fd.downloadDocument(euId, { fileType: 'CD' });
+const documents = await fd.listDocuments(euId);
+const version = documents.data.find((item) => item.document_id);
+
+if (version?.document_id) {
+  const selected = await fd.downloadDocument(euId, {
+    fileType: version.type,
+    documentId: version.document_id,
+  });
+  console.log(selected.document_id, selected.label);
+}
+
+const doc = await fd.downloadDocument(euId, { fileType: 'register_extract_current' });
 ```
 
 Aktueller and Chronologischer Abdruck, Gesellschafterliste, Satzung,
 Anmeldung and Musterprotokoll, as presigned download URLs.
+
+`listDocuments(euId)` returns a `CompanyDocumentList` after a live registry
+check, including older DK versions, labels, dates, `is_latest`, `stored`,
+`file_id`, `fetched_at` and `is_outdated`, plus `coverage`, `freshness` and
+`country_code`. It costs 5 credits; Swiss companies, empty catalogs and
+unreachable registries are unbilled. Swiss companies return an empty list
+with `coverage.status: 'not_applicable'`.
+
+Pass an item's `document_id` as `documentId` with its matching `fileType` to
+download that version. Omit `documentId` for the latest version; it cannot
+be combined with `fileId` or `fetchRealtime: true`. Register extracts have
+no `document_id` and are downloaded by `fileType`.
 
 ## Ownership: shareholders and UBO
 

@@ -112,6 +112,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/companies/{eu_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a company's register documents (live)
+         * @description Check the German registries live and list register documents,
+         *     including older DK versions. This typically takes several seconds.
+         *
+         *     Pass a DK item's `document_id` and its `type` as `file_type` to
+         *     `GET /v1/companies/{eu_id}/documents/download` to download that version.
+         *     `register_extract_current` and `register_extract_chronological` are generated
+         *     on request and have no `document_id`; download them by `file_type`.
+         *     `stored` indicates that a copy is already available for immediate download.
+         *
+         *     When the registries are unreachable or the company is no longer listed,
+         *     the response serves the stored catalog with the outcome in `freshness`.
+         *     Unreachable-registry, unavailable-company and empty answers are not billed.
+         *     Swiss companies return an empty list with `coverage.status=not_applicable`.
+         *     This endpoint always checks live and accepts no `fetch_realtime` parameter.
+         *
+         *
+         *     ## Pricing
+         *
+         *     See the [pricing page](https://firmendata.com/en/plans) for this endpoint's credit cost.
+         */
+        get: operations["listCompanyDocuments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/companies/{eu_id}/documents/download": {
         parameters: {
             query?: never;
@@ -141,6 +179,12 @@ export interface paths {
          *       to download the file that triggered it.
          *     - **`file_id`** — optional. When omitted, falls back to the latest published
          *       file of the requested type.
+         *     - **`document_id`** — optional catalog identifier (`doc_<int>`) from
+         *       `GET /v1/companies/{eu_id}/documents`. Downloads that specific DK version,
+         *       including older versions, fetching it on demand when no stored copy exists.
+         *       `file_type` must match. Cannot be combined with `file_id` or
+         *       `fetch_realtime=true`. Register extracts have no catalog identifier;
+         *       request them by `file_type`.
          *     - **`fetch_realtime`** — optional. When `true`, fetch the requested
          *       `file_type` from the German registries before resolving the file, so the
          *       presigned URL points at the freshest version. Adds upstream latency
@@ -647,7 +691,7 @@ export interface paths {
          *       Hard-code it in your unit tests; never reuse it for real
          *       subscriptions.
          *     * **`email`** — composes the bilingual change-notification email
-         *       (subject + HTML body) and SMTPs it to `recipient_email`. Subject
+         *       (subject + HTML body) and sends it to `recipient_email`. Subject
          *       is prefixed with `[TEST]`; the body carries an explicit "this is a
          *       test" banner so a human reading the inbox can't mistake it for a
          *       live update. For `doc_*` subscription types the response also
@@ -1045,6 +1089,12 @@ export interface components {
          */
         AutocompleteHit: {
             /**
+             * Country Code
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register.
+             * @enum {string}
+             */
+            country_code: "DE" | "CH";
+            /**
              * Display Name
              * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
              */
@@ -1418,6 +1468,11 @@ export interface components {
             revenue_unit?: string | null;
         };
         /**
+         * Canton
+         * @enum {string}
+         */
+        Canton: "AG" | "AI" | "AR" | "BE" | "BL" | "BS" | "FR" | "GE" | "GL" | "GR" | "JU" | "LU" | "NE" | "NW" | "OW" | "SG" | "SH" | "SO" | "SZ" | "TG" | "TI" | "UR" | "VD" | "VS" | "ZG" | "ZH";
+        /**
          * CapitalEntry
          * @description A share-capital figure recorded by one entry.
          */
@@ -1475,6 +1530,12 @@ export interface components {
             business_purpose?: string | null;
             /** @description Contact and web presence (domain, logo, social profiles, LinkedIn enrichment). */
             contact: components["schemas"]["ContactBlock"];
+            /**
+             * Country Code
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register.
+             * @enum {string}
+             */
+            country_code: "DE" | "CH";
             /**
              * Display Name
              * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
@@ -1678,6 +1739,11 @@ export interface components {
          */
         CompanyDocumentDownload: {
             /**
+             * Document Id
+             * @description Catalog identifier echoed for a specific DK version.
+             */
+            document_id?: string | null;
+            /**
              * Download Url
              * @description Presigned download URL. Honours the file's original content type.
              */
@@ -1712,6 +1778,11 @@ export interface components {
              */
             is_outdated: boolean;
             /**
+             * Label
+             * @description The document's label as the registry lists it. Its language depends on which register portal answered (German or English); use `type_label_de` / `type_label_en` for a stable name.
+             */
+            label?: string | null;
+            /**
              * Object
              * @description Discriminator. Always `company_document_download`.
              * @default company_document_download
@@ -1745,6 +1816,108 @@ export interface components {
              * @description When firmendata last fetched this document.
              */
             updated_at: string;
+        };
+        /** CompanyDocumentList */
+        CompanyDocumentList: {
+            /**
+             * Country Code
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register.
+             * @enum {string}
+             */
+            country_code: "DE" | "CH";
+            /** @description Whether register document downloads apply to this company. */
+            coverage: components["schemas"]["DocumentsCoverage"];
+            /**
+             * Data
+             * @description Register extracts first, then DK documents grouped by type, newest dated versions first and undated versions last. Includes older DK versions. Empty when no documents are available or downloads do not apply.
+             */
+            data: components["schemas"]["CompanyDocumentListItem"][];
+            /**
+             * Eu Id
+             * @description firmendata company identifier.
+             */
+            eu_id: string;
+            /** @description Outcome of this request's live catalog walk. `last_checked_at` is the successful check time, or null when the walk did not succeed. Failed walks serve the stored catalog without billing. */
+            freshness: components["schemas"]["Freshness"];
+            /**
+             * Object
+             * @description Discriminator. Always `company_document_list`.
+             * @default company_document_list
+             * @constant
+             */
+            object: "company_document_list";
+        };
+        /** CompanyDocumentListItem */
+        CompanyDocumentListItem: {
+            /**
+             * Document Date
+             * @description Document date stated in the registry label, when known; null for register extracts.
+             */
+            document_date?: string | null;
+            /**
+             * Document Id
+             * @description Catalog identifier accepted by `/documents/download`; null for register extracts, which are downloaded by `file_type`.
+             */
+            document_id?: string | null;
+            /**
+             * Fetched At
+             * @description When firmendata last fetched the stored copy; null when no copy is held.
+             */
+            fetched_at?: string | null;
+            /**
+             * File Id
+             * @description Identifier of the stored copy (`file_<id>`); null when no copy is held.
+             */
+            file_id?: string | null;
+            /**
+             * Is Latest
+             * @description `true` for the first, newest listed version of its type. Always `true` for register extracts.
+             */
+            is_latest: boolean;
+            /**
+             * Is Outdated
+             * @description `true` for a stored register extract older than the company's latest register entry. Request `/documents/download` with `fetch_realtime=true` for a current extract. Always `false` for DK documents.
+             * @default false
+             */
+            is_outdated: boolean;
+            /**
+             * Label
+             * @description The document's label as the registry lists it. Its language depends on which register portal answered (German or English); use `type_label_de` / `type_label_en` for a stable name and `document_date` for the date.
+             */
+            label?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `company_document_listing`.
+             * @default company_document_listing
+             * @constant
+             */
+            object: "company_document_listing";
+            /**
+             * Published At
+             * @description Publication date recorded in the catalog, when known; null for register extracts.
+             */
+            published_at?: string | null;
+            /**
+             * Stored
+             * @description `true` when firmendata holds a copy that can be downloaded immediately.
+             */
+            stored: boolean;
+            /**
+             * Type
+             * @description Kind of register document.
+             * @enum {string}
+             */
+            type: "register_extract_current" | "register_extract_chronological" | "shareholder_list" | "articles_of_association" | "company_registration" | "model_protocol";
+            /**
+             * Type Label De
+             * @description German document type name, such as `Aktueller Abdruck` or `Liste der Gesellschafter`.
+             */
+            type_label_de: string;
+            /**
+             * Type Label En
+             * @description English document type name, such as `Current Register Extract` or `Shareholder List`.
+             */
+            type_label_en: string;
         };
         /**
          * CompanyFinancials
@@ -2039,6 +2212,32 @@ export interface components {
              * @description All known websites of the company, primary first.
              */
             websites?: components["schemas"]["WebsiteEntry"][];
+        };
+        /**
+         * Country
+         * @enum {string}
+         */
+        Country: "DE" | "CH";
+        /** DocumentsCoverage */
+        DocumentsCoverage: {
+            /**
+             * Object
+             * @description Discriminator. Always `documents_coverage`.
+             * @default documents_coverage
+             * @constant
+             */
+            object: "documents_coverage";
+            /**
+             * Reason
+             * @description Explanation when document downloads do not apply to this company.
+             */
+            reason?: string | null;
+            /**
+             * Status
+             * @description `available` for companies in the German registers; `not_applicable` for the Swiss commercial register, which publishes no document downloads. An available catalog may be empty.
+             * @enum {string}
+             */
+            status: "available" | "not_applicable";
         };
         /**
          * EmployeeHistoryBlock
@@ -3126,7 +3325,7 @@ export interface components {
          * @description Transport for the notification.
          *
          *     * ``webhook``: HTTP POST a signed JSON payload to ``webhook_url``.
-         *     * ``email``:   SMTP (Zoho) deliver a bilingual email to ``recipient_email``.
+         *     * ``email``:   Send a bilingual email to ``recipient_email``.
          *
          *     A subscription with ``notification_type = None`` is async (poll-only):
          *     the dispatcher performs no outbound delivery, records the change in
@@ -3392,7 +3591,7 @@ export interface components {
          * Rechtsform
          * @enum {string}
          */
-        Rechtsform: "GmbH" | "KG" | "e.K." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "e.V." | "AG" | "eG" | "ausländische Rechtsform (HRB)" | "gGmbH" | "UG & Co. KG" | "ausländische Rechtsform" | "SE" | "sonstige juristische Person" | "EWIV" | "KGaA" | "Ltd. & Co. KG" | "sonstige juristische Person (HRA)" | "GmbH & Co. OHG" | "VVaG" | "SE & Co. KG" | "ausländische Rechtsform (HRA)" | "AG & Co. KG" | "ausländische Rechtsform (PR)" | "SCE" | "ausländische Rechtsform (GnR)" | "Stiftung & Co. KG" | "eG & Co. KG";
+        Rechtsform: "GmbH" | "KG" | "e.K." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "e.V." | "AG" | "eG" | "ausländische Rechtsform (HRB)" | "gGmbH" | "UG & Co. KG" | "ausländische Rechtsform" | "SE" | "sonstige juristische Person" | "EWIV" | "KGaA" | "Ltd. & Co. KG" | "sonstige juristische Person (HRA)" | "GmbH & Co. OHG" | "VVaG" | "SE & Co. KG" | "ausländische Rechtsform (HRA)" | "AG & Co. KG" | "ausländische Rechtsform (PR)" | "SCE" | "ausländische Rechtsform (GnR)" | "Stiftung & Co. KG" | "eG & Co. KG" | "Einzelunternehmen (CH)" | "Kollektivgesellschaft (CH)" | "Kommanditgesellschaft (CH)" | "Kommanditaktiengesellschaft (CH)" | "AG (CH)" | "GmbH (CH)" | "Genossenschaft (CH)" | "Verein (CH)" | "Stiftung (CH)" | "Zweigniederlassung ausl. Ges. (CH)" | "Besondere Rechtsform (CH)" | "KmGK (CH)" | "SICAV (CH)" | "SICAF (CH)" | "Institut des öffentlichen Rechts (CH)" | "Nichtkaufmännische Prokura (CH)" | "Gemeinderschaft (CH)" | "Zweigniederlassung (CH)";
         /**
          * RegisterCourt
          * @enum {string}
@@ -3496,6 +3695,12 @@ export interface components {
             /** @description Registered seat address. */
             address?: components["schemas"]["Address"] | null;
             /**
+             * Country Code
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register.
+             * @enum {string}
+             */
+            country_code: "DE" | "CH";
+            /**
              * Cpv Award Codes
              * @description CPV (Common Procurement Vocabulary) codes from public-procurement awards.
              */
@@ -3587,6 +3792,11 @@ export interface components {
              * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`).
              */
             register_type?: string | null;
+            /**
+             * Registered Seat
+             * @description Registered seat as filed (German, may include district).
+             */
+            registered_seat?: string | null;
             /**
              * Revenue
              * @description Most recently reported annual revenue in EUR (Umsatzerlöse). The fiscal year it is for is `revenue_year`. Null when the company has never disclosed one — which is the common case, not an edge case: small and medium-sized filers publish abridged accounts with no profit-and-loss statement. Use `total_assets` for a size measure with far broader coverage.
@@ -3942,7 +4152,7 @@ export interface components {
              *
              *     - `null` — no outbound delivery; the dispatcher records each change as a `subscription_event` and the customer retrieves the rendered payload by polling `GET /v1/subscriptions/{id}/events` using the subscription/job id this request returns. Must omit both `webhook_url` and `recipient_email`.
              *     - `webhook` — POST a signed JSON body to `webhook_url`. Requires `webhook_url`; rejects `recipient_email`.
-             *     - `email` — SMTP a bilingual notification to `recipient_email`. Requires `recipient_email`; rejects `webhook_url`.
+             *     - `email` — send a bilingual notification email to `recipient_email`. Requires `recipient_email`; rejects `webhook_url`.
              */
             notification_type?: components["schemas"]["NotificationType"] | null;
             /**
@@ -3971,7 +4181,7 @@ export interface components {
          *     :class:`Subscription`. For webhook subscriptions it additionally
          *     carries the plaintext signing secret — only available here, never
          *     returned by any other endpoint. For email subscriptions
-         *     ``webhook_secret`` is ``null`` (signatures don't apply to SMTP).
+         *     ``webhook_secret`` is ``null`` (signatures don't apply to email).
          */
         SubscriptionCreated: {
             /** @description How often you wish to receive notifications. A delivery is only made when the underlying data has actually changed since `latest_succeeded_publish_date` — no change means no notification. `immediately` delivers an update as soon as it is detected, with a service-level objective of within 1 hour of publication. `daily` / `weekly` / `monthly` batch the check at the named cadence. `null` only for legacy subscriptions whose stored cadence predates this enum. */
@@ -4077,7 +4287,7 @@ export interface components {
             delivery_attempted: boolean;
             /**
              * Delivery Attempts
-             * @description Number of in-run delivery attempts for this event. Webhook: 0–3 (retried on 5xx / transport errors). Email: 0–1 (SMTP failures wait for the next cadence).
+             * @description Number of in-run delivery attempts for this event. Webhook: 0–3 (retried on 5xx / transport errors). Email: 0–1 (send failures wait for the next cadence).
              */
             delivery_attempts: number;
             /**
@@ -4238,7 +4448,7 @@ export interface components {
             delivery_attempted: boolean;
             /**
              * Delivery Attempts
-             * @description Number of in-run delivery attempts for this event. Webhook: 0–3 (retried on 5xx / transport errors). Email: 0–1 (SMTP failures wait for the next cadence).
+             * @description Number of in-run delivery attempts for this event. Webhook: 0–3 (retried on 5xx / transport errors). Email: 0–1 (send failures wait for the next cadence).
              */
             delivery_attempts: number;
             /**
@@ -4420,7 +4630,7 @@ export interface components {
             receiver_response_excerpt?: string | null;
             /**
              * Receiver Succeeded
-             * @description Webhook: the receiver returned a 2xx status. Email: the SMTP server accepted the message.
+             * @description Webhook: the receiver returned a 2xx status. Email: the email provider accepted the message.
              */
             receiver_succeeded: boolean;
             /**
@@ -4969,15 +5179,19 @@ export interface operations {
                 cursor?: string | null;
                 /** @description Field to order results by. Defaults to keyword-match relevance when `q` is given, otherwise `revenue` descending. Companies missing the value always sort last, whichever direction is chosen. `total_assets` ranks far more companies than `revenue` does — see the filter notes on those two. */
                 sort?: components["schemas"]["Sort"] | null;
-                /** @description Sort direction. Defaults to `desc`. */
+                /** @description Defaults to `desc`, except `asc` for `sort=name`. */
                 sort_direction?: components["schemas"]["SortDirection"] | null;
                 /** @description Exact Registernummer, digits only (`12345` for HRB 12345). Register numbers repeat across courts and types — combine with `register_court` / `register_type` to identify one company. */
                 register_number?: number | null;
+                /** @description Country of the company register. Single-valued. */
+                country?: components["schemas"]["Country"] | null;
+                /** @description Swiss address canton codes. Multi-valued; OR-merged with `bundesland`. */
+                canton?: components["schemas"]["Canton"][] | null;
                 /** @description Register type. Single-valued. */
                 register_type?: components["schemas"]["RegisterType"] | null;
                 /** @description Registering court (Registergericht), by its canonical Handelsregister name. An `Amtsgericht ` prefix is accepted and ignored. Single-valued. Ten listed courts were consolidated away years ago and hold no companies — they stay valid inputs so existing calls keep working. */
                 register_court?: components["schemas"]["RegisterCourt"] | null;
-                /** @description Registered seat city, matched exactly but umlaut-insensitively. Multi-valued, and OR-merged with `bundesland` into one location filter. */
+                /** @description Registered seat city, matched exactly but umlaut-insensitively. Compare with `registered_seat` on each hit; `address.city` is the business address and can differ. Multi-valued, and OR-merged with `bundesland` into one location filter. */
                 city?: string[] | null;
                 /** @description German federal state. Multi-valued; also accepts postal codes (`BY`, `NRW`) and English names (`Bavaria`). */
                 bundesland?: components["schemas"]["Bundesland"][] | null;
@@ -5332,6 +5546,140 @@ export interface operations {
             };
         };
     };
+    listCompanyDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description firmendata company identifier. */
+                eu_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyDocumentList"];
+                };
+            };
+            /** @description Missing, invalid, revoked, or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 401,
+                     *       "title": "Authentication required.",
+                     *       "type": "https://api.firmendata.com/problems/unauthenticated"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The requested resource does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "No company with id DEF1103R.HRB999999B.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 404,
+                     *       "title": "Resource not found.",
+                     *       "type": "https://api.firmendata.com/problems/not-found"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Request validation failed; see `errors[]` for per-field details. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "limit: Input should be less than or equal to 50",
+                     *       "errors": [
+                     *         {
+                     *           "message": "Input should be less than or equal to 50",
+                     *           "param": "limit"
+                     *         }
+                     *       ],
+                     *       "instance": "/v1/companies/search",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 422,
+                     *       "title": "Request validation failed.",
+                     *       "type": "https://api.firmendata.com/problems/validation-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded. Rejected requests do not consume the limit or any credits. Honour `Retry-After` (seconds) before retrying. */
+            429: {
+                headers: {
+                    /** @description Numeric limit of the tighter window currently applying. */
+                    "RateLimit-Limit"?: number;
+                    /** @description Requests left in that window (0 on 429). */
+                    "RateLimit-Remaining"?: number;
+                    /** @description Seconds until the window resets. */
+                    "RateLimit-Reset"?: number;
+                    /** @description Seconds to wait before the next request will succeed. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
+                     *       "instance": "/v1/companies/autocomplete",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 429,
+                     *       "title": "Too many requests.",
+                     *       "type": "https://api.firmendata.com/problems/rate-limit-exceeded"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 500,
+                     *       "title": "Internal server error.",
+                     *       "type": "https://api.firmendata.com/problems/server-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     downloadCompanyDocument: {
         parameters: {
             query: {
@@ -5339,6 +5687,8 @@ export interface operations {
                 file_type: "register_extract_current" | "register_extract_chronological" | "shareholder_list" | "articles_of_association" | "company_registration" | "model_protocol";
                 /** @description Specific document id (as returned in the company detail `documents[]` block). Defaults to the latest published file of `file_type` when omitted. */
                 file_id?: string | null;
+                /** @description Specific DK catalog version from the live document list. Cannot be combined with `file_id` or `fetch_realtime=true`. */
+                document_id?: string | null;
                 /** @description When `true`, fetch the requested `file_type` from the German registries before resolving the file, so the presigned URL points at the freshest version. Adds upstream latency (typically several seconds). Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };

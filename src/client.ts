@@ -18,6 +18,7 @@ import type {
   AutocompleteResponse,
   CompanyDetail,
   CompanyDocumentDownload,
+  CompanyDocumentList,
   CompanyFinancials,
   CompanyHistory,
   SearchFilters,
@@ -189,7 +190,7 @@ export class FirmenData {
   }
 
   /**
-   * Advanced search over the German commercial register.
+   * Advanced search over the German and Swiss commercial registers.
    *
    * Filters combine with AND; array filters combine with OR internally.
    * Paginate by passing `pagination.next_cursor` back as `cursor`, unchanged —
@@ -246,9 +247,20 @@ export class FirmenData {
     });
   }
 
+  /** Check the registry live and list documents, including older DK versions. */
+  listDocuments(euId: string): Promise<CompanyDocumentList> {
+    return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}/documents`);
+  }
+
   downloadDocument(
     euId: string,
-    options: { fileType: string; fileId?: string; fetchRealtime?: boolean },
+    options: {
+      fileType: string;
+      fileId?: string;
+      /** From `listDocuments`; `fileType` must match. Cannot combine with `fileId` or `fetchRealtime: true`. */
+      documentId?: string;
+      fetchRealtime?: boolean;
+    },
   ): Promise<CompanyDocumentDownload> {
     return this.#request(
       'GET',
@@ -257,6 +269,7 @@ export class FirmenData {
         query: {
           file_type: options.fileType,
           file_id: options.fileId,
+          document_id: options.documentId,
           fetch_realtime: options.fetchRealtime,
         },
       },
