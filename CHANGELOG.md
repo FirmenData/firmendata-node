@@ -8,6 +8,9 @@
   schema-derived query, response and event types.
 - Added `iterateFeedNewCompanies()` and `iterateFeedInsolvencies()` async
   iterators that page until caught up and return the final cursor for resuming.
+- Both feeds accept `register_court` (German Registergericht or Austrian
+  Firmenbuch court names, repeated values combined with OR); on the insolvency
+  feed it filters by the company's register court, not the insolvency court.
 - Documented feed polling, cursor persistence, event deduplication and billing.
 
 ## 1.2.1

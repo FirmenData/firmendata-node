@@ -235,6 +235,7 @@ for (const feed of feeds) {
         country: 'CH',
         bundesland: ['Bayern', 'Berlin'],
         canton: ['ZH', 'BE'],
+        register_court: ['München', 'Berlin (Charlottenburg)'],
         industry_slug: ['construction', 'trade'],
         rechtsform: ['AG (CH)', 'GmbH (CH)'],
         ...(feed.method === 'feedInsolvencies'
@@ -252,7 +253,13 @@ for (const feed of feeds) {
       expect(url.searchParams.get('since')).toBe(query.since);
       expect(url.searchParams.get('limit')).toBe('100');
       expect(url.searchParams.get('country')).toBe('CH');
-      for (const key of ['bundesland', 'canton', 'industry_slug', 'rechtsform'] as const) {
+      for (const key of [
+        'bundesland',
+        'canton',
+        'register_court',
+        'industry_slug',
+        'rechtsform',
+      ] as const) {
         expect(url.searchParams.getAll(key)).toEqual(query[key]);
       }
       if (feed.method === 'feedInsolvencies') {

@@ -242,7 +242,11 @@ empty pages are free. Deduplicate events on `id`, as reparsing can resurface the
 On the first call, optionally set `since` to an ISO datetime within the last
 7 days (default: the last day). Use `cursor` on subsequent calls. `limit` accepts
 1–100 and defaults to 50. Both feeds accept `country`, `bundesland`, `canton`,
-`industry_slug` and `rechtsform`; array filters use repeated query keys.
+`register_court`, `industry_slug` and `rechtsform`; array filters use repeated
+query keys. `register_court` takes German Registergericht or Austrian Firmenbuch
+court names (the same values as `search()`), combined with OR; select Swiss
+companies with `canton`. On the insolvency feed it is the company's register
+court, not the insolvency court.
 Insolvencies also accepts `category`, `revenue_min` and `revenue_max`, and defaults
 to country `DE`. Request `Schuldenruf` explicitly with `category` to include it.
 Cursors survive deploys and restarts, but positions expire after 7 days; restart

@@ -6712,6 +6712,8 @@ export interface operations {
                 bundesland?: components["schemas"]["Bundesland"][] | null;
                 /** @description Swiss notice canton for country=CH; repeated values are matched with OR. */
                 canton?: components["schemas"]["Canton"][] | null;
+                /** @description Company register court, not the insolvency court. German Registergericht or Austrian Firmenbuch court; repeated values are matched with OR. Select Swiss companies with canton, since their register office is cantonal. */
+                register_court?: components["schemas"]["RegisterCourt"][] | null;
                 /** @description Company industry category; repeated values are matched with OR. */
                 industry_slug?: components["schemas"]["IndustrySlug"][] | null;
                 /** @description Company legal form; repeated values are matched with OR and UG is distinguished from GmbH. */
@@ -6847,6 +6849,8 @@ export interface operations {
                 bundesland?: components["schemas"]["Bundesland"][] | null;
                 /** @description Swiss company canton; repeated values are matched with OR. */
                 canton?: components["schemas"]["Canton"][] | null;
+                /** @description German Registergericht or Austrian Firmenbuch court; repeated values are matched with OR. Select Swiss companies with canton, since their register office is cantonal. */
+                register_court?: components["schemas"]["RegisterCourt"][] | null;
                 /** @description Company industry category; repeated values are matched with OR. */
                 industry_slug?: components["schemas"]["IndustrySlug"][] | null;
                 /** @description Company legal form; repeated values are matched with OR and UG is distinguished from GmbH. */
