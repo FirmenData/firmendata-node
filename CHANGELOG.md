@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0
+
+- Regenerated types from the updated API contract.
+- `autocomplete()` accepts an optional `country` (`DE`, `CH` or `AT`).
+- Added Beta `feedNewCompanies()` and `feedInsolvencies()` methods with
+  schema-derived query, response and event types.
+- Added `iterateFeedNewCompanies()` and `iterateFeedInsolvencies()` async
+  iterators that page until caught up and return the final cursor for resuming.
+- Documented feed polling, cursor persistence, event deduplication and billing.
+
 ## 1.2.1
 
 Regenerated from the updated API contract. Additive, non-breaking:

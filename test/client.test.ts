@@ -19,7 +19,7 @@ import {
   ValidationError,
 } from '../src/index.js';
 import { backoffMs, shouldRetry } from '../src/retry.js';
-import type { CompanyDocumentList } from '../src/index.js';
+import type { CompanyDocumentList, FeedEvent, FeedInsolvenciesQuery } from '../src/index.js';
 
 function problem(slug: string, status: number, extra: Record<string, unknown> = {}) {
   return {
@@ -77,6 +77,23 @@ describe('request shaping', () => {
       string
     >;
     expect(headers.Authorization).toBe('Bearer firmendata_live_xyz');
+  });
+
+  it.each(['DE', 'CH', 'AT'] as const)('encodes autocomplete country %s', async (country) => {
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, { data: [] }));
+    await client.autocomplete('siemens', { country, limit: 10, fetchRealtime: true });
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.pathname).toBe('/v1/companies/autocomplete');
+    expect(url.searchParams.get('q')).toBe('siemens');
+    expect(url.searchParams.get('country')).toBe(country);
+    expect(url.searchParams.get('limit')).toBe('10');
+    expect(url.searchParams.get('fetch_realtime')).toBe('true');
+  });
+
+  it('omits autocomplete country by default', async () => {
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, { data: [] }));
+    await client.autocomplete('siemens');
+    expect(new URL(String(fetchSpy.mock.calls[0]![0])).searchParams.has('country')).toBe(false);
   });
 
   it('repeats the key for array filters', async () => {
@@ -178,6 +195,156 @@ describe('request shaping', () => {
     expect(String(fetchSpy.mock.calls[0]![0])).toContain('DE%20B%2F1103');
   });
 });
+
+const feeds = [
+  {
+    method: 'feedNewCompanies',
+    iterator: 'iterateFeedNewCompanies',
+    path: '/v1/feeds/new-companies',
+    type: 'company.founded',
+  },
+  {
+    method: 'feedInsolvencies',
+    iterator: 'iterateFeedInsolvencies',
+    path: '/v1/feeds/insolvencies',
+    type: 'company.insolvency_notice',
+  },
+] as const;
+
+for (const feed of feeds) {
+  describe(feed.method, () => {
+    const event = (id: string): FeedEvent => ({
+      object: 'feed_event',
+      id,
+      type: feed.type,
+      discovered_at: '2026-10-12T12:00:00Z',
+      company: { country: 'DE', name: 'Example GmbH' },
+      links: {},
+    });
+
+    it('passes opaque cursors unchanged and encodes array and scalar filters', async () => {
+      const cursor = 'signed+/= cursor?&%';
+      const body = { data: [event('one')], next_cursor: 'next+/=', has_more: true };
+      const { client, fetchSpy } = clientWith(() => jsonResponse(200, body), {
+        apiKey: 'k',
+      });
+      const query: FeedInsolvenciesQuery = {
+        cursor,
+        since: '2026-10-11T12:00:00+02:00',
+        limit: 100,
+        country: 'CH',
+        bundesland: ['Bayern', 'Berlin'],
+        canton: ['ZH', 'BE'],
+        industry_slug: ['construction', 'trade'],
+        rechtsform: ['AG (CH)', 'GmbH (CH)'],
+        ...(feed.method === 'feedInsolvencies'
+          ? {
+              category: ['Konkurseröffnung', 'Schuldenruf'],
+              revenue_min: 0,
+              revenue_max: 1_000_000,
+            }
+          : {}),
+      };
+      expect(await client[feed.method](query)).toEqual(body);
+      const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+      expect(url.pathname).toBe(feed.path);
+      expect(url.searchParams.get('cursor')).toBe(cursor);
+      expect(url.searchParams.get('since')).toBe(query.since);
+      expect(url.searchParams.get('limit')).toBe('100');
+      expect(url.searchParams.get('country')).toBe('CH');
+      for (const key of ['bundesland', 'canton', 'industry_slug', 'rechtsform'] as const) {
+        expect(url.searchParams.getAll(key)).toEqual(query[key]);
+      }
+      if (feed.method === 'feedInsolvencies') {
+        expect(url.searchParams.getAll('category')).toEqual(query.category);
+        expect(url.searchParams.get('revenue_min')).toBe('0');
+        expect(url.searchParams.get('revenue_max')).toBe('1000000');
+      }
+      expect(fetchSpy.mock.calls[0]![1]).toMatchObject({
+        method: 'GET',
+        headers: { Authorization: 'Bearer k' },
+      });
+    });
+
+    it('lets the server apply defaults when called without a query', async () => {
+      const body = { data: [], next_cursor: 'empty-cursor', has_more: false };
+      const { client, fetchSpy } = clientWith(() => jsonResponse(200, body));
+      expect(await client[feed.method]()).toEqual(body);
+      expect(new URL(String(fetchSpy.mock.calls[0]![0])).search).toBe('');
+    });
+
+    it('yields all events, follows cursors across empty pages and returns when caught up', async () => {
+      const first = event('one');
+      const second = event('two');
+      const pages = [
+        { data: [first, second], next_cursor: 'page+/= &1', has_more: true },
+        { data: [], next_cursor: 'page+/= &2', has_more: true },
+        { data: [first], next_cursor: 'final+/= &3', has_more: false },
+      ];
+      let index = 0;
+      const { client, fetchSpy } = clientWith(() => {
+        const page = pages[index++];
+        if (!page) throw new Error('Unexpected extra poll');
+        return jsonResponse(200, page);
+      });
+      const query = {
+        since: '2026-10-11T12:00:00Z',
+        limit: 2,
+        bundesland: ['Bayern', 'Berlin'] as const,
+      };
+      const input = { ...query, bundesland: [...query.bundesland] };
+      const iterator = client[feed.iterator](input);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(await iterator.next()).toEqual({ done: false, value: first });
+      expect(await iterator.next()).toEqual({ done: false, value: second });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      // Duplicate IDs remain visible so callers can deduplicate durably.
+      expect(await iterator.next()).toEqual({ done: false, value: first });
+      expect(await iterator.next()).toEqual({ done: true, value: 'final+/= &3' });
+      expect(await iterator.next()).toEqual({ done: true, value: undefined });
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      const urls = fetchSpy.mock.calls.map(([url]) => new URL(String(url)));
+      expect(urls.map((url) => url.searchParams.get('cursor'))).toEqual([
+        null,
+        'page+/= &1',
+        'page+/= &2',
+      ]);
+      expect(urls.map((url) => url.searchParams.get('since'))).toEqual([
+        query.since,
+        null,
+        null,
+      ]);
+      for (const url of urls) {
+        expect(url.pathname).toBe(feed.path);
+        expect(url.searchParams.get('limit')).toBe('2');
+        expect(url.searchParams.getAll('bundesland')).toEqual(query.bundesland);
+      }
+      expect(input).toEqual({ ...query, bundesland: [...query.bundesland] });
+    });
+
+    it('returns an empty page cursor and resumes with it unchanged', async () => {
+      let calls = 0;
+      const { client, fetchSpy } = clientWith(() =>
+        jsonResponse(200, {
+          data: [],
+          next_cursor: ++calls === 1 ? 'empty+/= &cursor' : 'resumed-cursor',
+          has_more: false,
+        }),
+      );
+      const complete = await client[feed.iterator]().next();
+      expect(complete).toEqual({ done: true, value: 'empty+/= &cursor' });
+      if (!complete.done) throw new Error('Expected completion');
+      expect(await client[feed.iterator]({ cursor: complete.value }).next()).toEqual({
+        done: true,
+        value: 'resumed-cursor',
+      });
+      const resumed = new URL(String(fetchSpy.mock.calls[1]![0]));
+      expect(resumed.searchParams.get('cursor')).toBe('empty+/= &cursor');
+      expect(resumed.searchParams.has('since')).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+  });
+}
 
 describe('document lists', () => {
   it('lists live documents and older versions with their metadata', async () => {

@@ -36,6 +36,9 @@ API, back a search box, or run low-volume queries. Add a key for substantially
 higher limits plus every other endpoint. On a `429`, honour `Retry-After`; the
 client already does this for you.
 
+Limit suggestions to a country with `fd.autocomplete('siemens', { country: 'DE' })`.
+`country` also accepts `CH` and `AT`; omit it to search across countries.
+
 Create a key at [firmendata.com](https://firmendata.com/de/account/api-keys) —
 the free plan includes 100 credits.
 
@@ -227,6 +230,51 @@ console.log(ubo.coverage.status, ubo.beneficial_owners);
   H holds 30% of the root → A is a UBO at **30%**, not 18%. Each link is
   independently tested against the 25% threshold, so a sub-threshold link
   breaks the chain entirely.
+
+## Event feeds (Beta)
+
+`feedNewCompanies(query)` and `feedInsolvencies(query)` return one page with
+`data`, `next_cursor` and `has_more`. An API key is required. Pass `next_cursor`
+back unchanged and persist it even after an empty page. When `has_more` is true,
+page again immediately; otherwise poll later. A page with events costs 1 credit;
+empty pages are free. Deduplicate events on `id`, as reparsing can resurface them.
+
+On the first call, optionally set `since` to an ISO datetime within the last
+7 days (default: the last day). Use `cursor` on subsequent calls. `limit` accepts
+1–100 and defaults to 50. Both feeds accept `country`, `bundesland`, `canton`,
+`industry_slug` and `rechtsform`; array filters use repeated query keys.
+Insolvencies also accepts `category`, `revenue_min` and `revenue_max`, and defaults
+to country `DE`. Request `Schuldenruf` explicitly with `category` to include it.
+Cursors survive deploys and restarts, but positions expire after 7 days; restart
+with a recent `since` if expired. Keep filters unchanged when resuming.
+
+The async iterators `iterateFeedNewCompanies(query)` and
+`iterateFeedInsolvencies(query)` yield events, page while `has_more` is true, then
+return the final cursor. Use `.next()` to capture that return value; `for await`
+discards it. For example, poll new companies once a minute:
+
+```ts
+const fd = new FirmenData({ apiKey: process.env.FIRMENDATA_API_KEY });
+let cursor: string | undefined; // Load your saved cursor on restart.
+const seen = new Set<string>(); // Use durable event IDs in production.
+
+for (;;) {
+  const events = fd.iterateFeedNewCompanies({ cursor, country: 'DE' });
+  let result = await events.next();
+  while (result.done === false) {
+    const event = result.value;
+    if (!seen.has(event.id)) {
+      console.log(event.id, event.company.name);
+      seen.add(event.id);
+    }
+    result = await events.next();
+  }
+  cursor = result.value; // Persist after processing, even if no events arrived.
+  await new Promise((resolve) => setTimeout(resolve, 60_000));
+}
+```
+
+To poll insolvencies, use `iterateFeedInsolvencies` with its own saved cursor.
 
 ## Subscriptions
 

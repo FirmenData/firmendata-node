@@ -43,6 +43,14 @@ export type CompanyDocumentDownload = ResponseOf<
 >;
 export type DocumentQuery = QueryOf<Get<'/v1/companies/{eu_id}/documents/download'>>;
 
+// -- event feeds (Beta) ------------------------------------------------------
+
+export type FeedNewCompaniesQuery = QueryOf<Get<'/v1/feeds/new-companies'>>;
+export type FeedNewCompaniesResponse = ResponseOf<Get<'/v1/feeds/new-companies'>>;
+export type FeedInsolvenciesQuery = QueryOf<Get<'/v1/feeds/insolvencies'>>;
+export type FeedInsolvenciesResponse = ResponseOf<Get<'/v1/feeds/insolvencies'>>;
+export type FeedEvent = NonNullable<FeedNewCompaniesResponse['data']>[number];
+
 // -- subscriptions ----------------------------------------------------------
 
 export type SubscriptionList = ResponseOf<Get<'/v1/subscriptions'>>;

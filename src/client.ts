@@ -15,12 +15,18 @@ import {
 } from './errors.js';
 import { DEFAULT_MAX_RETRIES, backoffMs, shouldRetry, sleep } from './retry.js';
 import type {
+  AutocompleteQuery,
   AutocompleteResponse,
   CompanyDetail,
   CompanyDocumentDownload,
   CompanyDocumentList,
   CompanyFinancials,
   CompanyHistory,
+  FeedEvent,
+  FeedInsolvenciesQuery,
+  FeedInsolvenciesResponse,
+  FeedNewCompaniesQuery,
+  FeedNewCompaniesResponse,
   SearchFilters,
   SearchResponse,
   ShareholdersReport,
@@ -178,13 +184,18 @@ export class FirmenData {
    */
   autocomplete(
     q: string,
-    options: { limit?: number; fetchRealtime?: boolean } = {},
+    options: {
+      limit?: number;
+      fetchRealtime?: boolean;
+      country?: AutocompleteQuery['country'];
+    } = {},
   ): Promise<AutocompleteResponse> {
     return this.#request('GET', '/v1/companies/autocomplete', {
       query: {
         q,
         limit: options.limit,
         fetch_realtime: options.fetchRealtime,
+        country: options.country,
       },
     });
   }
@@ -274,6 +285,68 @@ export class FirmenData {
         },
       },
     );
+  }
+
+  // -- event feeds (Beta) ----------------------------------------------------
+
+  /**
+   * Beta: one page of newly discovered companies. Persist `next_cursor`, even
+   * after empty pages. Page immediately while `has_more`; otherwise poll later.
+   * `since` is an initial ISO datetime, at most seven days back (default: last
+   * day). `limit` is 1–100 (default: 50). Deduplicate events on `id`.
+   * Requires an API key; one credit per page with events, empty pages are free.
+   */
+  feedNewCompanies(query: FeedNewCompaniesQuery = {}): Promise<FeedNewCompaniesResponse> {
+    return this.#request('GET', '/v1/feeds/new-companies', {
+      query: query as Record<string, QueryValue>,
+    });
+  }
+
+  /**
+   * Beta: one page of insolvency notices. Uses the same cursor, polling and
+   * billing rules as {@link feedNewCompanies}. Country defaults to DE;
+   * Schuldenruf notices must be selected by name with `category`.
+   */
+  feedInsolvencies(query: FeedInsolvenciesQuery = {}): Promise<FeedInsolvenciesResponse> {
+    return this.#request('GET', '/v1/feeds/insolvencies', {
+      query: query as Record<string, QueryValue>,
+    });
+  }
+
+  /**
+   * Yield new-company events until `has_more` is false, then return the final
+   * cursor. Capture the completed `.next()` result's `value` (a `for await`
+   * loop discards it), persist it, and resume later with `{ cursor: value }`.
+   * Keep filters unchanged when resuming. Deduplicate events on `id`.
+   */
+  async *iterateFeedNewCompanies(
+    query: FeedNewCompaniesQuery = {},
+  ): AsyncGenerator<FeedEvent, string, void> {
+    let nextQuery = { ...query };
+    for (;;) {
+      const page = await this.feedNewCompanies(nextQuery);
+      yield* page.data ?? [];
+      if (!page.has_more) return page.next_cursor;
+      nextQuery = { ...nextQuery, cursor: page.next_cursor, since: undefined };
+    }
+  }
+
+  /**
+   * Yield insolvency events until caught up, then return the final cursor.
+   * Capture the completed `.next()` result's `value`, persist it and resume
+   * later with `{ cursor: value }` and the same filters. `for await` discards
+   * the return value. Deduplicate events on `id`.
+   */
+  async *iterateFeedInsolvencies(
+    query: FeedInsolvenciesQuery = {},
+  ): AsyncGenerator<FeedEvent, string, void> {
+    let nextQuery = { ...query };
+    for (;;) {
+      const page = await this.feedInsolvencies(nextQuery);
+      yield* page.data ?? [];
+      if (!page.has_more) return page.next_cursor;
+      nextQuery = { ...nextQuery, cursor: page.next_cursor, since: undefined };
+    }
   }
 
   // -- subscriptions --------------------------------------------------------
