@@ -91,7 +91,7 @@ export interface paths {
          *     - **Business & industry** — trade description, products, primary WZ 2025 code with the full category tree
          *     - **Management** — register entry members (managing directors, authorised signatories, supervisory board)
          *     - **Ownership (LEI graph)** — direct parent and the first 25 direct subsidiaries via GLEIF, with the total count
-         *     - **Contact & web presence** — primary domain, Impressum URL, primary email, and discovered social profiles
+         *     - **Contact & web presence** — primary domain, Impressum URL, primary email, phone and fax numbers, and discovered social profiles
          *     - **Insolvency** — current status, court, case number, dissolution flag, most recent event date
          *     - **AI insights** — company summary, outlook, and risk + opportunity keywords in German and English
          *     - **Documents** — downloadable register documents available for the company (Aktueller Abdruck, Chronologischer Abdruck, Liste der Gesellschafter, Articles of Association — Gesellschaftsvertrag / Satzung / Statut depending on legal form, Anmeldung, Musterprotokoll); fetch a presigned URL via `/companies/{eu_id}/documents/download`; `is_outdated` flags a register extract older than the latest register entry
@@ -1225,6 +1225,12 @@ export interface components {
              * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`, `AT-FB`).
              */
             register_type?: string | null;
+            /**
+             * Registered Seat
+             * @description Registered seat as filed (German, may include district).
+             * @example München
+             */
+            registered_seat?: string | null;
             /**
              * Uid
              * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German and Austrian companies.
@@ -2367,6 +2373,16 @@ export interface components {
              */
             object: "company_contact";
             /**
+             * Phones
+             * @description Company phone and fax numbers.
+             */
+            phones?: components["schemas"]["Phone"][];
+            /**
+             * Primary Email
+             * @description Primary business contact email address.
+             */
+            primary_email?: string | null;
+            /**
              * Social Profiles
              * @description Discovered social-media profiles.
              */
@@ -3160,7 +3176,7 @@ export interface components {
          * IndustrySlug
          * @enum {string}
          */
-        IndustrySlug: "automotive" | "chemicals" | "construction" | "consulting" | "education" | "energy" | "financial_services" | "food" | "healthcare" | "holdings" | "hospitality" | "insurance" | "legal" | "logistics" | "manufacturing" | "media" | "mining" | "public_sector" | "technology" | "telecom" | "trade";
+        IndustrySlug: "automotive" | "chemicals" | "construction" | "consulting" | "education" | "energy" | "financial_services" | "food" | "healthcare" | "holdings" | "hospitality" | "insurance" | "legal" | "logistics" | "manufacturing" | "media" | "mining" | "other_services" | "public_sector" | "technology" | "telecom" | "trade";
         /**
          * InsolvencyBlock
          * @description Insolvency / Auflösung / Liquidation snapshot.
@@ -3802,6 +3818,35 @@ export interface components {
              * @description Honorific or academic title (e.g. `Dr.`).
              */
             title?: string | null;
+        };
+        /**
+         * Phone
+         * @description A company phone or fax number.
+         */
+        Phone: {
+            /**
+             * Display
+             * @description Number formatted for display.
+             */
+            display?: string | null;
+            /**
+             * Kind
+             * @description Whether the number is a phone or fax.
+             * @enum {string}
+             */
+            kind: "phone" | "fax";
+            /**
+             * Number
+             * @description Phone or fax number in E.164 format.
+             */
+            number: string;
+            /**
+             * Object
+             * @description Discriminator. Always `phone`.
+             * @default phone
+             * @constant
+             */
+            object: "phone";
         };
         /**
          * PotentialBeneficialOwner
@@ -5493,7 +5538,7 @@ export interface operations {
                 eu_id?: string | null;
                 /** @description Maximum number of hits to return per page. Hard upper bound is 50. */
                 limit?: number;
-                /** @description Opaque pagination cursor. Pass the `pagination.next_cursor` (or `previous_cursor`) from a previous response unchanged; a cursor that was not issued by this endpoint is rejected with `422`. */
+                /** @description Opaque pagination cursor. Pass the `pagination.next_cursor` (or `previous_cursor`) from a previous response unchanged; a cursor that was not issued by this endpoint is rejected with `422`. The cursor remembers the filters of the request that issued it: send it alone (with `limit` if you like), or with the same filters — a cursor sent with different filters is rejected with `422`. */
                 cursor?: string | null;
                 /** @description Field to order results by. Defaults to keyword-match relevance when `q` is given, otherwise `revenue` descending. Companies missing the value always sort last, whichever direction is chosen. `total_assets` ranks far more companies than `revenue` does — see the filter notes on those two. */
                 sort?: components["schemas"]["Sort"] | null;
@@ -5587,7 +5632,7 @@ export interface operations {
                 membership?: components["schemas"]["Membership"][] | null;
                 /** @description Exact LEI (ISO 17442), matched against the company's active LEI record. Case-insensitive. */
                 lei_code?: string | null;
-                /** @description Exact USt-IdNr (German / EU VAT number) as published on the company's Impressum. Case-insensitive. */
+                /** @description Exact VAT number from the company's Impressum or EU public-procurement (TED) notices. German USt-IdNr and Austrian UIDs (ATU…) are accepted. Case-insensitive. */
                 ust_idnr?: string | null;
                 /** @description Restrict to companies with (`true`) or without (`false`) a known website. */
                 has_website?: boolean | null;
