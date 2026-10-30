@@ -22,6 +22,12 @@ export type QueryOf<T> = T extends { parameters: { query?: infer Q } }
   : Record<string, never>;
 
 type Get<P extends keyof paths> = paths[P] extends { get: infer O } ? O : never;
+type Post<P extends keyof paths> = paths[P] extends { post: infer O } ? O : never;
+
+/** The JSON request body of an operation. */
+type BodyOf<T> = T extends { requestBody: { content: { 'application/json': infer B } } }
+  ? B
+  : never;
 
 // -- companies --------------------------------------------------------------
 
@@ -31,9 +37,12 @@ export type AutocompleteQuery = QueryOf<Get<'/v1/companies/autocomplete'>>;
 export type SearchResponse = ResponseOf<Get<'/v1/companies/search'>>;
 /** Every `/companies/search` filter. All optional; they combine with AND. */
 export type SearchFilters = QueryOf<Get<'/v1/companies/search'>>;
+/** One search result. List rows (`getList`) have the same shape. */
+export type SearchHit = NonNullable<SearchResponse['data']>[number];
 
 export type CompanyDetail = ResponseOf<Get<'/v1/companies/{eu_id}'>>;
 export type CompanyFinancials = ResponseOf<Get<'/v1/companies/{eu_id}/financials'>>;
+export type FinancialsQuery = QueryOf<Get<'/v1/companies/{eu_id}/financials'>>;
 export type ShareholdersReport = ResponseOf<Get<'/v1/companies/{eu_id}/shareholders'>>;
 export type UboReport = ResponseOf<Get<'/v1/companies/{eu_id}/ubo'>>;
 export type CompanyHistory = ResponseOf<Get<'/v1/companies/{eu_id}/history'>>;
@@ -51,6 +60,16 @@ export type FeedInsolvenciesQuery = QueryOf<Get<'/v1/feeds/insolvencies'>>;
 export type FeedInsolvenciesResponse = ResponseOf<Get<'/v1/feeds/insolvencies'>>;
 export type FeedEvent = NonNullable<FeedNewCompaniesResponse['data']>[number];
 
+// -- lists --------------------------------------------------------------------
+
+/** Every list the caller owns, newest first. */
+export type CompanyListsResponse = ResponseOf<Get<'/v1/lists'>>;
+export type CompanyListSummary = NonNullable<CompanyListsResponse['data']>[number];
+/** One page of a list's companies; rows match {@link SearchHit}. */
+export type CompanyListDetail = ResponseOf<Get<'/v1/lists/{list_id}'>>;
+/** Paging and sort options of `getList`. */
+export type CompanyListQuery = QueryOf<Get<'/v1/lists/{list_id}'>>;
+
 // -- subscriptions ----------------------------------------------------------
 
 export type SubscriptionList = ResponseOf<Get<'/v1/subscriptions'>>;
@@ -60,6 +79,11 @@ export type SubscriptionEventList = ResponseOf<
   Get<'/v1/subscriptions/{subscription_id}/events'>
 >;
 export type SubscriptionEvent = ResponseOf<Get<'/v1/subscriptions/events/{event_id}'>>;
+
+export type SubscriptionEventResendResponse = ResponseOf<
+  Post<'/v1/subscriptions/events/{event_id}/resend'>
+>;
+export type SubscriptionTestResponse = ResponseOf<Post<'/v1/subscriptions/test'>>;
 
 export type SubscriptionCreated = paths['/v1/subscriptions']['post'] extends {
   responses: { 201: { content: { 'application/json': infer R } } };
@@ -81,13 +105,20 @@ export type SubscriptionCreated = paths['/v1/subscriptions']['post'] extends {
  */
 export type SubscriptionCreateRequestDefaults = 'cadence' | 'language' | 'mode';
 
-type WithOptionalDefaults<B> = Omit<B, SubscriptionCreateRequestDefaults> &
-  Partial<Pick<B, Extract<SubscriptionCreateRequestDefaults, keyof B>>>;
+/** The same correction for `testDelivery`'s body. Pinned in `test/types.test.ts` too. */
+export type SubscriptionTestRequestDefaults = 'delivery_scenario' | 'language' | 'scenario';
 
-export type SubscriptionCreateRequest = paths['/v1/subscriptions']['post'] extends {
-  requestBody: { content: { 'application/json': infer B } };
-}
-  ? WithOptionalDefaults<B>
-  : never;
+type WithOptionalDefaults<B, K extends string> = Omit<B, K> &
+  Partial<Pick<B, Extract<K, keyof B>>>;
+
+export type SubscriptionCreateRequest = WithOptionalDefaults<
+  BodyOf<Post<'/v1/subscriptions'>>,
+  SubscriptionCreateRequestDefaults
+>;
+
+export type SubscriptionTestRequest = WithOptionalDefaults<
+  BodyOf<Post<'/v1/subscriptions/test'>>,
+  SubscriptionTestRequestDefaults
+>;
 
 export type { paths };

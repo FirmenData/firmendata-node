@@ -17,7 +17,7 @@ export interface paths {
          *
          *     **Free without an API key.** This is the only v1 endpoint you can call unauthenticated. Keyless access is rate limited — modestly, and by address — and is intended for trying the API out, for a search box, or for low-volume use. Send an `Authorization: Bearer <key>` header for substantially higher limits; the call still costs 0 credits either way. Respect `Retry-After` on a `429`.
          *
-         *     Set `fetch_realtime=true` (with `q` of at least 3 characters) to also search the German company registers live and index any companies not yet known to firmendata — this is how a company founded days ago can be found before the regular register sweep reaches it. The freshly indexed companies appear in the same response. **`fetch_realtime` requires an API key** and is billed; keyless requests that set it are rejected with `401`.
+         *     Set `fetch_realtime=true` (with `q` of at least 3 characters) to also search the German company registers live, so companies we do not have yet — including ones registered only days ago — appear in the same response. **`fetch_realtime` requires an API key** and is billed; keyless requests that set it are rejected with `401`.
          *
          *
          *     ## Pricing
@@ -58,7 +58,7 @@ export interface paths {
          *
          *     Setting `fetch_realtime=true` additionally searches the German registers live
          *     for `q` (or `company_name`, one of which is then required) and appends any
-         *     companies not yet indexed by firmendata to the first page, carrying identity and
+         *     companies not yet known to firmendata to the first page, carrying identity and
          *     seat only. First page only — omit `cursor`.
          *
          *
@@ -122,9 +122,9 @@ export interface paths {
         /**
          * List a company's register documents (live)
          * @description Check the German registries live and list register documents,
-         *     including older DK versions. This typically takes several seconds.
+         *     including older document versions. This typically takes several seconds.
          *
-         *     Pass a DK item's `document_id` and its `type` as `file_type` to
+         *     Pass a document's `document_id` and its `type` as `file_type` to
          *     `GET /v1/companies/{eu_id}/documents/download` to download that version.
          *     `register_extract_current` and `register_extract_chronological` are generated
          *     on request and have no `document_id`; download them by `file_type`.
@@ -180,7 +180,7 @@ export interface paths {
          *     - **`file_id`** — optional. When omitted, falls back to the latest published
          *       file of the requested type.
          *     - **`document_id`** — optional catalog identifier (`doc_<int>`) from
-         *       `GET /v1/companies/{eu_id}/documents`. Downloads that specific DK version,
+         *       `GET /v1/companies/{eu_id}/documents`. Downloads that specific document version,
          *       including older versions, fetching it on demand when no stored copy exists.
          *       `file_type` must match. Cannot be combined with `file_id` or
          *       `fetch_realtime=true`. Register extracts have no catalog identifier;
@@ -190,7 +190,7 @@ export interface paths {
          *       presigned URL points at the freshest version. Adds upstream latency
          *       (typically several seconds). Failures are surfaced via
          *       `freshness.realtime_fetching_status`; the response still falls back to the most
-         *       recent indexed file when realtime fetching fails.
+         *       recent available file when realtime fetching fails.
          *
          *     Returns `404` when no matching document is available — the `detail`
          *     field distinguishes whether the document is unknown to the German
@@ -287,7 +287,7 @@ export interface paths {
          *     capital (`share_capital`), officers (`board_changes`), business purpose,
          *     legal form and articles — the endpoint returns the full timeline of
          *     entries that affected it, oldest first. `current_board` is who holds office
-         *     now, derived by replaying every appointment, departure and correction.
+         *     now, taking appointments, departures and corrections into account.
          *     Dates are ISO 8601; people use the same `person` object as the company
          *     detail.
          *
@@ -295,14 +295,14 @@ export interface paths {
          *       underlying register history from the German registries before
          *       responding. Adds upstream latency (typically several seconds).
          *       Failures are surfaced via `freshness.realtime_fetching_status`; the response
-         *       still falls back to the most recent indexed data when a refresh
+         *       still falls back to the most recent available data when a refresh
          *       fails.
          *
          *     `coverage.status` is `not_available` when no chronological extract exists
          *     for the company — the Swiss commercial register publishes none, Austrian
          *     history is not available yet, and some German entries have not been
          *     retrieved yet. Such responses are not charged;
-         *     Swiss companies still receive their legal-status timeline from SHAB.
+         *     Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB).
          *     A 404 means the company itself is unknown.
          *     The same data backs the `history` webhook subscription type, so the
          *     shape returned here is exactly the shape downstream consumers fetch
@@ -336,11 +336,9 @@ export interface paths {
          *     - **Coverage status** — whether a cap table is `available`, `not_applicable` (the legal form does not file Gesellschafterlisten), or `not_filed` (expected but missing)
          *     - **Shareholders** — each participant with share count, percentage of capital, and share class
          *     - **As-of metadata** — filing date of the aggregated list
-         *     - **`fetch_realtime`** — optional. When `true`, scrape the latest Liste der
-         *       Gesellschafter from the German registries and re-parse it before returning.
-         *       Adds upstream latency (typically several seconds). Scraping or parsing
-         *       failures are surfaced via `freshness.realtime_fetching_status`; the response still
-         *       falls back to the most recent indexed cap table when a refresh fails.
+         *     - **`fetch_realtime`** — optional. When `true`, retrieve the current shareholder list from the German register before returning.
+         *       Adds upstream latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status`; the response still
+         *       falls back to the most recent available cap table when a refresh fails.
          *
          *     Historical snapshots and cross-filing diffs are reserved for a later release.
          *
@@ -418,7 +416,7 @@ export interface paths {
          *       before building the graph. Adds noticeable latency (several seconds
          *       per company in the chain). Failures are surfaced via
          *       `freshness.realtime_fetching_status`; the graph still falls back to the most
-         *       recent indexed cap tables when a refresh fails.
+         *       recent available cap tables when a refresh fails.
          *
          *     **Edge cases worth knowing:**
          *
@@ -472,17 +470,16 @@ export interface paths {
          *     Pass `next_cursor` back unchanged, including after an empty page. Cursors
          *     persist across deploys and restarts. A discovery position older than seven
          *     days expires; restart with a recent `since`.
-         *     Rows are released after a settlement delay. `has_more=true` means continue
-         *     paging immediately; otherwise poll again later. Filters use the alert feeds'
-         *     matching rules. A reparse can resurface an event id: clients must deduplicate
-         *     on `id`. Only company information is returned. A page with events costs one
+         *     Events become available after a short delay. `has_more=true` means continue
+         *     paging immediately; otherwise poll again later. The same event may appear
+         *     more than once: clients must deduplicate on `id`. Only company information is returned. A page with events costs one
          *     credit; an empty page costs zero credits. An API key is required. Schuldenruf notices are included only when selected by name.
          *
          *     ## Pricing
          *
          *     See the [pricing page](https://firmendata.com/en/plans) for this endpoint's credit cost.
          */
-        get: operations["poll_insolvencies_v1_feeds_insolvencies_get"];
+        get: operations["pollInsolvencies"];
         put?: never;
         post?: never;
         delete?: never;
@@ -505,17 +502,16 @@ export interface paths {
          *     Pass `next_cursor` back unchanged, including after an empty page. Cursors
          *     persist across deploys and restarts. A discovery position older than seven
          *     days expires; restart with a recent `since`.
-         *     Rows are released after a settlement delay. `has_more=true` means continue
-         *     paging immediately; otherwise poll again later. Filters use the alert feeds'
-         *     matching rules. A reparse can resurface an event id: clients must deduplicate
-         *     on `id`. Only company information is returned. A page with events costs one
-         *     credit; an empty page costs zero credits. An API key is required. Swiss companies appear only when discovered by the SHAB new-company scanner.
+         *     Events become available after a short delay. `has_more=true` means continue
+         *     paging immediately; otherwise poll again later. The same event may appear
+         *     more than once: clients must deduplicate on `id`. Only company information is returned. A page with events costs one
+         *     credit; an empty page costs zero credits. An API key is required. Swiss events cover newly registered companies announced in the Swiss Official Gazette of Commerce (SHAB).
          *
          *     ## Pricing
          *
          *     See the [pricing page](https://firmendata.com/en/plans) for this endpoint's credit cost.
          */
-        get: operations["poll_new_companies_v1_feeds_new_companies_get"];
+        get: operations["pollNewCompanies"];
         put?: never;
         post?: never;
         delete?: never;
@@ -737,9 +733,9 @@ export interface paths {
         put?: never;
         /**
          * Resend event
-         * @description Re-sends a previously delivered webhook event to the subscription's current `webhook_url`. The body is cloned from the stored event verbatim; only `event_id` and `delivered_at` are refreshed so the receiver sees a distinct delivery it can dedupe on. Records a new event row — the original is left untouched.
+         * @description Re-sends a previously delivered webhook event to the subscription's current `webhook_url`. The body is cloned from the stored event verbatim; only `event_id` and `delivered_at` are refreshed so the receiver sees a distinct delivery it can dedupe on. Creates a new event — the original is left untouched.
          *
-         *     Only valid for webhook subscriptions whose original event has a stored `request_body`. Email events, async (poll-only) events, and rows that predate request-body persistence return 422 — there's nothing to re-POST.
+         *     Only valid for webhook subscriptions whose original event has a stored `request_body`. Email events, async (poll-only) events, and older events without recorded request bodies return 422 — there's nothing to re-POST.
          *
          *     ## Pricing
          *
@@ -765,7 +761,7 @@ export interface paths {
          * Test delivery
          * @description Send one **real** sample notification — webhook **or** email — using
          *     the same rendering, signing, and delivery path as production. **No
-         *     subscription is created**, no DB row is written, and no scrape runs.
+         *     subscription is created**, nothing is stored and no data is fetched.
          *     Safe and cheap to call repeatedly from your CI / integration tests.
          *
          *     Pick the transport via `notification_type`:
@@ -783,7 +779,7 @@ export interface paths {
          *       test" banner so a human reading the inbox can't mistake it for a
          *       live update. For `doc_*` subscription types the response also
          *       attaches a tiny on-the-fly **sample PDF** so the customer's
-         *       attachment-handling pipeline (parse Content-Type, save to disk,
+         *       attachment handling (parse Content-Type, save to disk,
          *       forward to S3, …) can be exercised end to end. In production the
          *       attachment is the real register PDF.
          *
@@ -1103,7 +1099,7 @@ export interface components {
         };
         /**
          * AiInsightsBlock
-         * @description AI-generated insights, derived from one filed annual report.
+         * @description Company summary and outlook based on one filed annual report.
          */
         AiInsightsBlock: {
             /**
@@ -1462,7 +1458,7 @@ export interface components {
         };
         /**
          * BoardMember
-         * @description A current officer, from the replay of every appointment and departure.
+         * @description A company officer currently in office.
          */
         BoardMember: {
             /**
@@ -1570,7 +1566,7 @@ export interface components {
         Bundesland: "Baden-Württemberg" | "Bayern" | "Berlin" | "Brandenburg" | "Bremen" | "Hamburg" | "Hessen" | "Mecklenburg-Vorpommern" | "Niedersachsen" | "Nordrhein-Westfalen" | "Rheinland-Pfalz" | "Saarland" | "Sachsen" | "Sachsen-Anhalt" | "Schleswig-Holstein" | "Thüringen" | "Burgenland" | "Kärnten" | "Niederösterreich" | "Oberösterreich" | "Salzburg" | "Steiermark" | "Tirol" | "Vorarlberg" | "Wien";
         /**
          * BusinessBlock
-         * @description Business block: products, segments, mined keywords.
+         * @description Company products, business segments and keywords.
          */
         BusinessBlock: {
             /**
@@ -1587,17 +1583,17 @@ export interface components {
             object: "company_business";
             /**
              * Opportunity Keywords
-             * @description Opportunity indicators mined from management reports.
+             * @description Opportunity indicators mentioned in management reports.
              */
             opportunity_keywords?: string[];
             /**
              * Products
-             * @description Products and services mined from filings.
+             * @description Products and services described in filings.
              */
             products?: string[];
             /**
              * Risk Keywords
-             * @description Risk indicators mined from management reports.
+             * @description Risk indicators mentioned in management reports.
              */
             risk_keywords?: string[];
         };
@@ -1691,16 +1687,16 @@ export interface components {
         CompanyDetail: {
             /** @description Registered seat address. */
             address?: components["schemas"]["Address"] | null;
-            /** @description AI-generated summary and outlook, localized. `null` when no AI insights are available for this company. */
+            /** @description Company summary and outlook, localized. `null` when no company insights are available for this company. */
             ai_insights?: components["schemas"]["AiInsightsBlock"] | null;
-            /** @description Business profile (products, segments, keywords). `null` when no products, segments, or mined keywords are available. */
+            /** @description Business profile (products, segments, keywords). `null` when no products, segments, or keywords are available. */
             business_info?: components["schemas"]["BusinessBlock"] | null;
             /**
              * Business Purpose
              * @description Company purpose (Gegenstand des Unternehmens, German as filed).
              */
             business_purpose?: string | null;
-            /** @description Contact and web presence (domain, logo, social profiles, LinkedIn enrichment). */
+            /** @description Contact and web presence (domain, logo, social profiles). */
             contact: components["schemas"]["ContactBlock"];
             /**
              * Country Code
@@ -1743,7 +1739,7 @@ export interface components {
              * @description Date of the founding document (Gründungsdokument), as filed in the register.
              */
             founding_document_date?: string | null;
-            /** @description How current the register snapshot in this response is. `last_checked_at` is the timestamp at which the company's structured register snapshot (SI) was last successfully fetched; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. The chronological register history has its own freshness object served by `/v1/companies/{eu_id}/history`. */
+            /** @description How current the register snapshot in this response is. `last_checked_at` is the timestamp at which the company's register profile was last successfully fetched; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. The chronological register history has its own freshness object served by `/v1/companies/{eu_id}/history`. */
             freshness: components["schemas"]["Freshness"];
             /** @description Industry classification (NACE codes). */
             industry_categorization: components["schemas"]["IndustryBlock"];
@@ -1773,9 +1769,7 @@ export interface components {
             legal_name?: string | null;
             /**
              * Legal Status
-             * @description Derived lifecycle status, resolved from the merged Strukturierte-Inhalte, Chronologisches-Datenblatt and Insolvenzbekanntmachungen timelines — the most recent event wins regardless of which source recorded it.
-             *
-             *     Swiss companies' status comes from SHAB bankruptcy and Nachlass notices.
+             * @description Company lifecycle status according to the commercial register and insolvency notices, including Swiss Official Gazette of Commerce (SHAB) bankruptcy and composition notices.
              *
              *     `deleted` — company has been removed from the German registries.
              *     `insolvent` — insolvency proceedings are open or preliminary measures are in force.
@@ -1914,7 +1908,7 @@ export interface components {
         CompanyDocumentDownload: {
             /**
              * Document Id
-             * @description Catalog identifier echoed for a specific DK version.
+             * @description Catalog identifier echoed for the requested document version.
              */
             document_id?: string | null;
             /**
@@ -2003,7 +1997,7 @@ export interface components {
             coverage: components["schemas"]["DocumentsCoverage"];
             /**
              * Data
-             * @description Register extracts first, then DK documents grouped by type, newest dated versions first and undated versions last. Includes older DK versions. Empty when no documents are available or downloads do not apply.
+             * @description Register extracts first, then other register documents grouped by type, newest dated versions first and undated versions last. Includes older document versions. Empty when no documents are available or downloads do not apply.
              */
             data: components["schemas"]["CompanyDocumentListItem"][];
             /**
@@ -2011,7 +2005,7 @@ export interface components {
              * @description firmendata company identifier.
              */
             eu_id: string;
-            /** @description Outcome of this request's live catalog walk. `last_checked_at` is the successful check time, or null when the walk did not succeed. Failed walks serve the stored catalog without billing. */
+            /** @description Outcome of this request's document availability check. `last_checked_at` is the successful check time, or null on failure. Failed checks return the last available document list without billing. */
             freshness: components["schemas"]["Freshness"];
             /**
              * Object
@@ -2050,7 +2044,7 @@ export interface components {
             is_latest: boolean;
             /**
              * Is Outdated
-             * @description `true` for a stored register extract older than the company's latest register entry. Request `/documents/download` with `fetch_realtime=true` for a current extract. Always `false` for DK documents.
+             * @description `true` for a stored register extract older than the company's latest register entry. Request `/documents/download` with `fetch_realtime=true` for a current extract. Always `false` for other register documents.
              * @default false
              */
             is_outdated: boolean;
@@ -2114,7 +2108,7 @@ export interface components {
              * @description Filed annual financial statements (Bilanz files) available for this company: Jahresabschluss, Konzernabschluss, or combined. Sorted by `published_at` descending. Attachments reference the filed PDF — downloads are not exposed in v1.
              */
             financial_publications?: components["schemas"]["FinancialPublication"][];
-            /** @description How current the financial filings in this response are. `last_checked_at` is the timestamp at which the company's filings were last successfully fetched and parsed; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
+            /** @description How current the financial filings in this response are. `last_checked_at` is the timestamp at which the company's filings were last successfully refreshed; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
             freshness: components["schemas"]["Freshness"];
             /** @description Multi-year history: annual top-line metrics with the top-level positions, plus the structured profit-and-loss, assets, and liabilities-and-equity rows from the filings (left empty with `details=false`). */
             history: components["schemas"]["FinancialHistoryBlock"];
@@ -2132,7 +2126,7 @@ export interface components {
         };
         /**
          * CompanyHistory
-         * @description Response model for `GET /v1/companies/{eu_id}/history`.
+         * @description Chronological register history for a company.
          *
          *     Everything recorded against a company in the chronological register
          *     extract (Chronologischer Abdruck), grouped by what changed. Timelines are
@@ -2187,13 +2181,13 @@ export interface components {
             legal_forms?: components["schemas"]["LegalFormEntry"][];
             /**
              * Legal Status
-             * @description Current legal status derived from the timeline (`active`, `dissolved`, `in_liquidation`, `insolvent`). `null` when the German register history is not available. Swiss companies still receive their legal status from SHAB bankruptcy and Nachlass notices.
+             * @description Current legal status derived from the timeline (`active`, `dissolved`, `in_liquidation`, `insolvent`). `null` when the German register history is not available. Swiss companies still receive their legal status from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices.
              * @example active
              */
             legal_status?: string | null;
             /**
              * Legal Status Events
-             * @description Insolvency, Auflösung and Liquidation events, newest first, merged and deduplicated across the source registries. Swiss companies still receive their legal-status timeline from SHAB bankruptcy and Nachlass notices when register history is not available. Empty for a company that has never been in insolvency or liquidation.
+             * @description Insolvency, Auflösung and Liquidation events, newest first, merged and deduplicated across the source registries. Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices when register history is not available. Empty for a company that has never been in insolvency or liquidation.
              */
             legal_status_events?: components["schemas"]["LegalStatusEvent"][];
             /**
@@ -2505,7 +2499,7 @@ export interface components {
         };
         /**
          * FeedEvent
-         * @description A company event. A reparse can resurface an id; deduplicate on `id`.
+         * @description A company event. The same event may appear more than once; deduplicate on `id`.
          */
         FeedEvent: {
             company: components["schemas"]["FeedCompany"];
@@ -2606,7 +2600,7 @@ export interface components {
          * @description Top-line annual financial metrics for one fiscal year.
          */
         FinancialMetric: {
-            /** @description Top-level balance-sheet positions (Anlagevermögen, Sachanlagen, Umlaufvermögen, Eigenkapital, Rückstellungen, Verbindlichkeiten, …). `null` when no balance sheet was parsed for this year. */
+            /** @description Top-level balance-sheet positions (Anlagevermögen, Sachanlagen, Umlaufvermögen, Eigenkapital, Rückstellungen, Verbindlichkeiten, …). `null` when no balance sheet is available for this year. */
             balance_sheet?: components["schemas"]["BalanceSheetPositions"] | null;
             /** @description Balance-sheet total (Bilanzsumme), i.e. Summe Aktiva. */
             balance_sheet_total?: components["schemas"]["Money"] | null;
@@ -2885,7 +2879,7 @@ export interface components {
             as_of?: string | null;
             /**
              * Evidence Source
-             * @description Which register sources backed this assessment: `cd` (chronological extract), `si` (structured snapshot) or `cd+si`.
+             * @description Register information supporting this assessment.
              */
             evidence_source?: string | null;
             /**
@@ -3098,7 +3092,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description `available`: the chronological register extract was parsed and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register publishes none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies still receive their legal-status timeline from SHAB.
+             * @description `available`: the chronological register history is available and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register publishes none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB).
              * @enum {string}
              */
             status: "available" | "not_available";
@@ -3182,8 +3176,8 @@ export interface components {
          * @description Insolvency / Auflösung / Liquidation snapshot.
          *
          *     Present whenever any legal-status event is on record — a voluntary
-         *     liquidation reports ``has_insolvency=false`` with a ``current_status``
-         *     of ``in_liquidation``.
+         *     liquidation reports `has_insolvency=false` with a `current_status`
+         *     of `in_liquidation`.
          */
         InsolvencyBlock: {
             /**
@@ -3285,7 +3279,7 @@ export interface components {
          * LegalStatus
          * @description Company lifecycle buckets for the search filter.
          *
-         *     Disjoint and exhaustive — every company in the index is in exactly one,
+         *     Disjoint and exhaustive — every company is in exactly one,
          *     and `deleted` outranks the rest (a deleted company that was also in
          *     liquidation counts as deleted, matching the company detail page).
          * @enum {string}
@@ -3306,7 +3300,7 @@ export interface components {
             case_number?: string | null;
             /**
              * Category
-             * @description Event type, in the shared German vocabulary: `Sicherungsmaßnahmen`, `Eröffnungen`, `Abweisungen mangels Masse`, `Aufhebung Sicherungsmaßnahmen`, `Aufhebung des Verfahrens`, `Auflösung durch Gesellschafterbeschluss`, `Auflösung mit Fortführung`, `Auflösung`. Swiss Handelsamtsblatt / SHAB notices for Swiss companies: `Konkurseröffnung`, `Einstellung mangels Aktiven`, `Schluss des Konkursverfahrens`, `Widerruf des Konkurses`, `Provisorische Nachlassstundung`, `Definitive Nachlassstundung`, `Aufhebung der Nachlassstundung`, `Bestätigung des Nachlassvertrages`, `Nachlassvertrag mit Vermögensabtretung`.
+             * @description Event type, in the shared German vocabulary: `Sicherungsmaßnahmen`, `Eröffnungen`, `Abweisungen mangels Masse`, `Aufhebung Sicherungsmaßnahmen`, `Aufhebung des Verfahrens`, `Auflösung durch Gesellschafterbeschluss`, `Auflösung mit Fortführung`, `Auflösung`. Swiss Official Gazette of Commerce (SHAB) notices for Swiss companies: `Konkurseröffnung`, `Einstellung mangels Aktiven`, `Schluss des Konkursverfahrens`, `Widerruf des Konkurses`, `Provisorische Nachlassstundung`, `Definitive Nachlassstundung`, `Aufhebung der Nachlassstundung`, `Bestätigung des Nachlassvertrages`, `Nachlassvertrag mit Vermögensabtretung`.
              * @example Auflösung durch Gesellschafterbeschluss
              */
             category: string;
@@ -3338,7 +3332,7 @@ export interface components {
             entry_number?: number | null;
             /**
              * Event Date
-             * @description Register entry date (SI / CD), portal publication date, or the SHAB publication date for `shab`. `null` when the source records no date.
+             * @description Register entry date, portal publication date, or the Swiss Official Gazette of Commerce (SHAB) publication date for `shab`. `null` when the source records no date.
              */
             event_date?: string | null;
             /**
@@ -3370,7 +3364,7 @@ export interface components {
             self_administration: boolean;
             /**
              * Sources
-             * @description Registries that recorded this event. `si` — Strukturierte Inhalte, `cd` — Chronologisches Datenblatt, `portal` — Insolvenzbekanntmachungen, `shab` — Schweizerisches Handelsamtsblatt (SOGC/FOSC), `firmenbuch` — Austrian Firmenbuch.
+             * @description Register or official publication venue recording this event: the commercial register, Insolvenzbekanntmachungen, the Swiss Official Gazette of Commerce (SHAB), or the Austrian Firmenbuch.
              */
             sources?: ("si" | "cd" | "portal" | "shab" | "firmenbuch")[];
         };
@@ -3559,7 +3553,7 @@ export interface components {
             role?: string | null;
             /**
              * Role Code
-             * @description firmendata-internal role code.
+             * @description Stable machine-readable role code.
              */
             role_code?: string | null;
         };
@@ -3567,9 +3561,8 @@ export interface components {
          * Membership
          * @description External-registry memberships used as a company filter.
          *
-         *     Each value renders to an ``EXISTS`` predicate against a side table
-         *     that carries ``eu_id`` back to ``company.eu_id``. The repository
-         *     OR-merges the predicates when multiple values are supplied.
+         *     Selecting multiple values matches companies with any of the selected
+         *     memberships.
          * @enum {string}
          */
         Membership: "Steuerberaterkammer" | "Wirtschaftsprueferkammer" | "bbh" | "BaFin" | "LEI";
@@ -3634,12 +3627,12 @@ export interface components {
          *
          *     A notification is only delivered when there is an actual update
          *     since the previous successful delivery — no update means no
-         *     notification. For ``one_time`` subscriptions, this is the retry
+         *     notification. For `one_time` subscriptions, this is the retry
          *     spacing while we wait for the data to become available.
          *
-         *     ``immediately`` delivers an update as soon as it is detected —
+         *     `immediately` delivers an update as soon as it is detected —
          *     service-level objective: within 1 hour of publication.
-         *     ``daily`` / ``weekly`` / ``monthly`` batch the check at the named
+         *     `daily` / `weekly` / `monthly` batch the check at the named
          *     cadence and notify only on actual changes.
          * @enum {string}
          */
@@ -3648,7 +3641,7 @@ export interface components {
          * NotificationLanguage
          * @description Display language for human-targeted notifications (currently
          *     just email subject + body). Webhook payloads carry both languages
-         *     in a bilingual ``summary`` block regardless of this setting.
+         *     in a bilingual `summary` block regardless of this setting.
          * @enum {string}
          */
         NotificationLanguage: "en" | "de";
@@ -3656,14 +3649,12 @@ export interface components {
          * NotificationType
          * @description Transport for the notification.
          *
-         *     * ``webhook``: HTTP POST a signed JSON payload to ``webhook_url``.
-         *     * ``email``:   Send a bilingual email to ``recipient_email``.
+         *     * `webhook`: HTTP POST a signed JSON payload to `webhook_url`.
+         *     * `email`:   Send a bilingual email to `recipient_email`.
          *
-         *     A subscription with ``notification_type = None`` is async (poll-only):
-         *     the dispatcher performs no outbound delivery, records the change in
-         *     ``subscription_events``, and the customer retrieves the rendered
-         *     payload via the events API using the subscription/job id returned at
-         *     create time.
+         *     With `notification_type = null`, no outbound notification is sent.
+         *     Retrieve changes through the events API using the subscription/job id
+         *     returned when the subscription is created.
          * @enum {string}
          */
         NotificationType: "webhook" | "email";
@@ -3899,6 +3890,8 @@ export interface components {
             }[] | null;
             /** @description URI reference identifying the specific occurrence (typically the request path). */
             instance?: string | null;
+            /** @description Same as `detail`; provided for HTTP clients that read a `message` field. */
+            message: string;
             /** @description Same value as the `X-Request-Id` response header: the one you sent, or a server-generated id. Quote it when contacting support. */
             request_id: string;
             /**
@@ -4109,7 +4102,7 @@ export interface components {
             legal_name: string;
             /**
              * Legal Status
-             * @description Lifecycle status, resolved from the merged Handelsregister (SI + CD) and Insolvenzbekanntmachungen timelines. Swiss companies' status comes from SHAB bankruptcy and Nachlass notices. Same vocabulary as `CompanyDetail.legal_status` and the `legal_status` search filter.
+             * @description Company lifecycle status according to the commercial register and insolvency notices, including Swiss Official Gazette of Commerce (SHAB) bankruptcy and composition notices. Same vocabulary as `CompanyDetail.legal_status` and the `legal_status` search filter.
              * @default active
              * @enum {string}
              */
@@ -4308,7 +4301,7 @@ export interface components {
             object: "shareholders_coverage";
             /**
              * Status
-             * @description Coverage status. `available`: cap table parsed and returned; `not_applicable`: legal form does not file a Gesellschafterliste, or the company is Austrian (no shareholder data yet); `not_filed`: filing expected but not yet received; `token_limit_reached`: filing too large to process.
+             * @description Coverage status. `available`: cap table available and returned; `not_applicable`: legal form does not file a Gesellschafterliste, or the company is Austrian (no shareholder data yet); `not_filed`: filing expected but not yet received; `token_limit_reached`: filing too large to process.
              * @default not_filed
              * @enum {string}
              */
@@ -4316,7 +4309,7 @@ export interface components {
         };
         /**
          * ShareholdersReport
-         * @description Response model for `GET /v1/companies/{eu_id}/shareholders`.
+         * @description Current shareholders and their shares in the company.
          */
         ShareholdersReport: {
             /** @description Latest cap-table snapshot. `null` unless `coverage.status == "available"`. */
@@ -4328,7 +4321,7 @@ export interface components {
              * @description firmendata company identifier.
              */
             eu_id: string;
-            /** @description How current the cap-table snapshot in this response is. `last_checked_at` is the timestamp at which the underlying Liste der Gesellschafter (or Musterprotokoll fallback) was last successfully ingested for this company; `null` when `coverage.status != "available"`. `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
+            /** @description How current the cap-table snapshot in this response is. `last_checked_at` is the timestamp at which the underlying Liste der Gesellschafter (or Musterprotokoll fallback) was last successfully retrieved for this company; `null` when `coverage.status != "available"`. `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
             freshness: components["schemas"]["Freshness"];
             /**
              * Object
@@ -4401,10 +4394,10 @@ export interface components {
          *     attempt embedded.
          *
          *     The signing secret is **never** returned here; only
-         *     :class:`SubscriptionCreated` carries it, and only once.
+         *     `SubscriptionCreated` carries it, and only once.
          */
         Subscription: {
-            /** @description How often you wish to receive notifications. A delivery is only made when the underlying data has actually changed since `latest_succeeded_publish_date` — no change means no notification. `immediately` delivers an update as soon as it is detected, with a service-level objective of within 1 hour of publication. `daily` / `weekly` / `monthly` batch the check at the named cadence. `null` only for legacy subscriptions whose stored cadence predates this enum. */
+            /** @description How often you wish to receive notifications. A delivery is only made when the underlying data has actually changed since `latest_succeeded_publish_date` — no change means no notification. `immediately` delivers an update as soon as it is detected, with a service-level objective of within 1 hour of publication. `daily` / `weekly` / `monthly` batch the check at the named cadence. `null` only for legacy subscriptions without a named cadence; use `cadence_seconds` instead. */
             cadence: components["schemas"]["NotificationCadence"] | null;
             /**
              * Cadence Seconds
@@ -4444,7 +4437,7 @@ export interface components {
              * @description Publish date of the document last successfully delivered. The next webhook is sent only when a strictly newer publish date appears.
              */
             latest_succeeded_publish_date?: string | null;
-            /** @description `recurring` keeps delivering forever at the configured `cadence`. `one_time` keeps polling at the configured `cadence` until the first successful delivery, then stops. The row stays around as a record — `DELETE` it when you're done. */
+            /** @description `recurring` keeps delivering forever at the configured `cadence`. `one_time` keeps polling at the configured `cadence` until the first successful delivery, then stops. The subscription remains available as a record — `DELETE` it when you're done. */
             mode: components["schemas"]["SubscriptionMode"];
             /** @description Delivery transport — `webhook`, `email`, or `null` for async (poll-only) subscriptions, where no outbound delivery is performed and the customer consumes change events via the events API. */
             notification_type: components["schemas"]["NotificationType"] | null;
@@ -4511,7 +4504,7 @@ export interface components {
             /**
              * @description Delivery transport. **Default: `null`** — async (poll-only).
              *
-             *     - `null` — no outbound delivery; the dispatcher records each change as a `subscription_event` and the customer retrieves the rendered payload by polling `GET /v1/subscriptions/{id}/events` using the subscription/job id this request returns. Must omit both `webhook_url` and `recipient_email`.
+             *     - `null` — no outbound delivery; each change is available as a `subscription_event` and the customer retrieves the rendered payload by polling `GET /v1/subscriptions/{id}/events` using the subscription/job id this request returns. Must omit both `webhook_url` and `recipient_email`.
              *     - `webhook` — POST a signed JSON body to `webhook_url`. Requires `webhook_url`; rejects `recipient_email`.
              *     - `email` — send a bilingual notification email to `recipient_email`. Requires `recipient_email`; rejects `webhook_url`.
              */
@@ -4538,14 +4531,14 @@ export interface components {
         };
         /**
          * SubscriptionCreated
-         * @description Response shape for ``POST /v1/subscriptions``. Identical to
-         *     :class:`Subscription`. For webhook subscriptions it additionally
+         * @description Newly created subscription. Includes the subscription details and,
+         *     for webhook subscriptions, additionally
          *     carries the plaintext signing secret — only available here, never
          *     returned by any other endpoint. For email subscriptions
-         *     ``webhook_secret`` is ``null`` (signatures don't apply to email).
+         *     `webhook_secret` is `null` (signatures don't apply to email).
          */
         SubscriptionCreated: {
-            /** @description How often you wish to receive notifications. A delivery is only made when the underlying data has actually changed since `latest_succeeded_publish_date` — no change means no notification. `immediately` delivers an update as soon as it is detected, with a service-level objective of within 1 hour of publication. `daily` / `weekly` / `monthly` batch the check at the named cadence. `null` only for legacy subscriptions whose stored cadence predates this enum. */
+            /** @description How often you wish to receive notifications. A delivery is only made when the underlying data has actually changed since `latest_succeeded_publish_date` — no change means no notification. `immediately` delivers an update as soon as it is detected, with a service-level objective of within 1 hour of publication. `daily` / `weekly` / `monthly` batch the check at the named cadence. `null` only for legacy subscriptions without a named cadence; use `cadence_seconds` instead. */
             cadence: components["schemas"]["NotificationCadence"] | null;
             /**
              * Cadence Seconds
@@ -4585,7 +4578,7 @@ export interface components {
              * @description Publish date of the document last successfully delivered. The next webhook is sent only when a strictly newer publish date appears.
              */
             latest_succeeded_publish_date?: string | null;
-            /** @description `recurring` keeps delivering forever at the configured `cadence`. `one_time` keeps polling at the configured `cadence` until the first successful delivery, then stops. The row stays around as a record — `DELETE` it when you're done. */
+            /** @description `recurring` keeps delivering forever at the configured `cadence`. `one_time` keeps polling at the configured `cadence` until the first successful delivery, then stops. The subscription remains available as a record — `DELETE` it when you're done. */
             mode: components["schemas"]["SubscriptionMode"];
             /** @description Delivery transport — `webhook`, `email`, or `null` for async (poll-only) subscriptions, where no outbound delivery is performed and the customer consumes change events via the events API. */
             notification_type: components["schemas"]["NotificationType"] | null;
@@ -4629,11 +4622,11 @@ export interface components {
          * SubscriptionEvent
          * @description Full event record with the exact bytes firmendata sent on the
          *     wire. Returned by the historical event endpoints — heavier than
-         *     :class:`SubscriptionEventStatus`, which is the trimmed status block
-         *     embedded in subscription detail responses.
+         *     `SubscriptionEventStatus`, the shorter status block embedded in
+         *     subscription detail responses.
          *
-         *     For email rows and historical rows that predate the request-body
-         *     column migration, every ``request_*`` field is ``null``.
+         *     For email events and older events without recorded request details,
+         *     every `request_*` field is `null`.
          */
         SubscriptionEvent: {
             /**
@@ -4707,7 +4700,7 @@ export interface components {
             publish_date_seen?: string | null;
             /**
              * Request Body
-             * @description The exact JSON body firmendata POSTed to your endpoint. Null for email events and for events recorded before the request body was persisted (rows older than 2026-05-02). Re-verify the signature with: `hmac_sha256(secret, f'{request_timestamp}.{json.dumps(request_body, separators=(",",":"))}')`.
+             * @description The exact JSON body firmendata POSTed to your endpoint. `null` for email events and older events without a recorded request body. Re-verify the signature with: `hmac_sha256(secret, f'{request_timestamp}.{json.dumps(request_body, separators=(",",":"))}')`.
              */
             request_body?: {
                 [key: string]: unknown;
@@ -4728,8 +4721,8 @@ export interface components {
              */
             request_url?: string | null;
             /**
-             * Scrape Error Message
-             * @description Compact, customer-safe description of a failed data check. One sentence — names the company id and the data slice in plain language; never echoes internal class names. Examples: `"No shareholder list available for DEF1103R.HRB279792B on Handelsregister."`, `"Handelsregister was temporarily unreachable while checking the articles of association for DEF1103R.HRB279792B."`. The dispatcher re-attempts every failed scrape on the configured `cadence`, so most messages don't repeat that — the only exception is `scrape_failed_company_not_found`, which is effectively terminal until the company reappears in the registry. `null` for successful or non-failure events.
+             * Data check error message
+             * @description Explanation of a failed data check, or `null` for successful or non-failure events. Failed checks are retried on the configured `cadence`. For `scrape_failed_company_not_found`, the company must reappear in the register before data can be retrieved.
              */
             scrape_error_message?: string | null;
             /**
@@ -4758,7 +4751,7 @@ export interface components {
         };
         /**
          * SubscriptionEventResendResponse
-         * @description Response shape for ``POST /v1/subscriptions/events/{event_id}/resend``.
+         * @description Result of resending a subscription event.
          */
         SubscriptionEventResendResponse: {
             /**
@@ -4771,7 +4764,7 @@ export interface components {
              * @description Short error string when the resend did not succeed.
              */
             error?: string | null;
-            /** @description The new event row recording this resend. Has its own fresh `event_id`. The receiver sees that same id in the body and in the `X-Firmendata-Delivery-Id` header. */
+            /** @description The new event recording this resend. Has its own fresh `event_id`. The receiver sees that same id in the body and in the `X-Firmendata-Delivery-Id` header. */
             event: components["schemas"]["SubscriptionEvent"];
             /**
              * Http Status
@@ -4860,8 +4853,8 @@ export interface components {
              */
             publish_date_seen?: string | null;
             /**
-             * Scrape Error Message
-             * @description Compact, customer-safe description of a failed data check. One sentence — names the company id and the data slice in plain language; never echoes internal class names. Examples: `"No shareholder list available for DEF1103R.HRB279792B on Handelsregister."`, `"Handelsregister was temporarily unreachable while checking the articles of association for DEF1103R.HRB279792B."`. The dispatcher re-attempts every failed scrape on the configured `cadence`, so most messages don't repeat that — the only exception is `scrape_failed_company_not_found`, which is effectively terminal until the company reappears in the registry. `null` for successful or non-failure events.
+             * Data check error message
+             * @description Explanation of a failed data check, or `null` for successful or non-failure events. Failed checks are retried on the configured `cadence`. For `scrape_failed_company_not_found`, the company must reappear in the register before data can be retrieved.
              */
             scrape_error_message?: string | null;
             /**
@@ -4896,11 +4889,11 @@ export interface components {
         SubscriptionMode: "recurring" | "one_time";
         /**
          * SubscriptionTestRequest
-         * @description Inputs for ``POST /v1/subscriptions/test``.
+         * @description Inputs for `POST /v1/subscriptions/test`.
          *
          *     Same discriminator rules as the create payload: webhook
-         *     subscriptions need ``webhook_url``, email subscriptions need
-         *     ``recipient_email``. Sending the wrong combination returns ``422``.
+         *     subscriptions need `webhook_url`, email subscriptions need
+         *     `recipient_email`. Sending the wrong combination returns `422`.
          */
         SubscriptionTestRequest: {
             /**
@@ -4945,11 +4938,11 @@ export interface components {
         };
         /**
          * SubscriptionTestResponse
-         * @description Outputs for ``POST /v1/subscriptions/test``.
+         * @description Outputs for `POST /v1/subscriptions/test`.
          *
          *     Transport-shaped: the webhook fields populate when the request was
          *     a webhook test, the email fields populate when it was an email
-         *     test. The common ``receiver_*`` block describes the outcome
+         *     test. The common `receiver_*` block describes the outcome
          *     regardless of transport.
          */
         SubscriptionTestResponse: {
@@ -5066,8 +5059,8 @@ export interface components {
          *     | `details` | Current company snapshot — identity, registered address, current board, share capital, and lifecycle status. The webhook body's `data.links.company_detail` resolves to `GET /v1/companies/{eu_id}` for the full parsed JSON. Available for every Handelsregister-registered company. |
          *     | `history` | Chronological register history — every recorded change to company name (firma), seat (Sitz), capital, board, business purpose, etc. The webhook body's `data.links.company_history` resolves to `GET /v1/companies/{eu_id}/history` for the full parsed timeline. Available for every Handelsregister-registered company. |
          *     | `shareholders` | Cap table — primarily from the **Liste der Gesellschafter** (list of shareholders), filed by GmbH and UG (haftungsbeschränkt). **Auto-fallback to Musterprotokoll:** companies founded via the simplified procedure under §2 Abs. 1a GmbHG do not file a separate Liste — their **Musterprotokoll** (model protocol) names the founders and their share allocations directly. firmendata handles this transparently: when no Liste has been filed, the `shareholders` subscription derives the cap table from the Musterprotokoll instead. So `shareholders` is the right subscription for cap-table updates regardless of which document the company filed. The webhook body links to `GET /v1/companies/{eu_id}/shareholders` for the parsed cap table. |
-         *     | `ubo` | Beneficial owners (**wirtschaftlich Berechtigte**) — natural persons who ultimately own or control the company, derived by walking the Gesellschafter graph. Each dispatch refreshes the cap-table document for **every** German GmbH/UG in the ownership chain (root and parents), not just the root, and fires when **any** chain member's Liste der Gesellschafter (or Musterprotokoll fallback) gets a newer publish date. The webhook body carries the full UBO report (graph, `beneficial_owners`, `potential_beneficial_owners`, `coverage` with `reason`) plus a per-node `chain` breakdown (`eu_id`, `depth`, refresh `status`, latest `publish_date`).  `coverage.status="partial"` means one or more unresolved branches carry effective share above 25 % at the root and could hide a UBO — `potential_beneficial_owners` lists those entities (foreign holdings, unlisted parents, depth-capped branches) with their summed effective share so KYC consumers can decide whether to escalate. `coverage.status="available"` with `has_unresolved_branches=true` means unresolved branches exist but are immaterial (combined share below the threshold or isolated by sub-threshold control links).  Transient per-node failures (e.g. `documents_temporarily_unavailable`, `platform_unavailable`) defer the dispatch — `latest_succeeded_publish_date` is not advanced and the next cadence retries; chain members that succeeded today are dedup'd at the registry layer so retries only re-hit the failed nodes' documents. Deterministic per-node outcomes (e.g. `file_unavailable`, `skipped_not_applicable` for non-GmbH chain members) are surfaced in the chain breakdown but do **not** block delivery — the rest of the chain still ships. |
-         *     | `doc_articles_of_association` | **Articles of association** document — Germany's constitutional company document, called **Gesellschaftsvertrag** (GmbH, KG, OHG, GbR), **Satzung** (AG, KGaA, eG, Verein), or **Statut** (some specific forms) depending on legal form. All three are filed under the same registry slot.  Webhook body's `data.download.url` is a 7-day presigned URL to the PDF — the customer can fetch the file directly without a follow-up API call. After the URL expires, `GET /v1/companies/{eu_id}/documents/download?file_type=articles_of_association` mints a fresh one.  **Not all companies have one.** Companies founded via the simplified procedure under §2 Abs. 1a GmbHG file a **Musterprotokoll** in its place — subscribe to `doc_model_protocol` for those. |
+         *     | `ubo` | Beneficial owners (**wirtschaftlich Berechtigte**) — natural persons who ultimately own or control the company, derived by walking the Gesellschafter graph. Each dispatch refreshes the cap-table document for **every** German GmbH/UG in the ownership chain (root and parents), not just the root, and fires when **any** chain member's Liste der Gesellschafter (or Musterprotokoll fallback) gets a newer publish date. The webhook body carries the full UBO report (graph, `beneficial_owners`, `potential_beneficial_owners`, `coverage` with `reason`) plus a per-node `chain` breakdown (`eu_id`, `depth`, refresh `status`, latest `publish_date`).  `coverage.status="partial"` means one or more unresolved branches carry effective share above 25 % at the root and could hide a UBO — `potential_beneficial_owners` lists those entities (foreign holdings, unlisted parents, depth-capped branches) with their summed effective share so KYC consumers can decide whether to escalate. `coverage.status="available"` with `has_unresolved_branches=true` means unresolved branches exist but are immaterial (combined share below the threshold or isolated by sub-threshold control links).  Transient per-node failures (e.g. `documents_temporarily_unavailable`, `platform_unavailable`) delay notification until the next successful check; the next cadence retries. Other per-node outcomes (e.g. `file_unavailable`, `skipped_not_applicable` for non-GmbH chain members) are surfaced in the chain breakdown but do **not** block delivery — the rest of the chain still ships. |
+         *     | `doc_articles_of_association` | **Articles of association** document — Germany's constitutional company document, called **Gesellschaftsvertrag** (GmbH, KG, OHG, GbR), **Satzung** (AG, KGaA, eG, Verein), or **Statut** (some specific forms) depending on legal form. Each is the constitutional document for its legal form.  Webhook body's `data.download.url` is a 7-day presigned URL to the PDF — the customer can fetch the file directly without a follow-up API call. After the URL expires, `GET /v1/companies/{eu_id}/documents/download?file_type=articles_of_association` mints a fresh one.  **Not all companies have one.** Companies founded via the simplified procedure under §2 Abs. 1a GmbHG file a **Musterprotokoll** in its place — subscribe to `doc_model_protocol` for those. |
          *     | `doc_company_registration` | **Initial company registration filing (Anmeldung zur Eintragung)** — the notarial document submitted to register the company. Webhook body carries a 7-day presigned download URL (`data.download.url`). Available for any newly-registered company; fires when a new Anmeldung is filed. |
          *     | `doc_model_protocol` | **Model protocol document (Musterprotokoll)** — the simplified notarial founding deed for small GmbH and UG (haftungsbeschränkt) companies under §2 Abs. 1a GmbHG. Legally substitutes for **both** the Articles of Association and the Liste der Gesellschafter for these companies. The Musterprotokoll itself names the founders, their share allocations, and the basic company terms in a single document.  Webhook body carries a 7-day presigned download URL (`data.download.url`). Only companies founded via the simplified procedure have one; for everyone else this subscription reports `scrape_failed_file_not_found`. For **cap-table changes** — regardless of which document was filed — subscribe to `shareholders` instead (it auto-falls-back to the Musterprotokoll when no Liste has been filed). |
          *     | `doc_shareholder_list` | **Liste der Gesellschafter** document — the standalone shareholder-list filing. Webhook body carries a 7-day presigned download URL (`data.download.url`).  Distinct from the parsed `shareholders` subscription: this tracks the **document itself** with no Musterprotokoll fallback, so a Musterprotokoll-only GmbH (founded under §2 Abs. 1a GmbHG) reports `scrape_failed_file_not_found` until they file a real Liste. For parsed cap-table updates that work for any GmbH/UG, subscribe to `shareholders` instead. |
@@ -5078,10 +5071,8 @@ export interface components {
          * TenderRole
          * @description Which side of an EU public-procurement notice a company was on.
          *
-         *     Overlapping, not exhaustive — a company can be both, and the large
-         *     majority of the register is neither. Selecting both values therefore
-         *     means "appears in TED at all" and is a genuine filter, where selecting
-         *     every :class:`LegalStatus` is a no-op.
+         *     A company can be a buyer, a winner, both, or neither. Selecting both
+         *     values matches companies that appear in TED in either role.
          * @enum {string}
          */
         TenderRole: "winner" | "buyer";
@@ -5112,7 +5103,7 @@ export interface components {
         };
         /**
          * UboEdge
-         * @description A direct-ownership edge: ``source`` holds ``share_percent`` of ``target``.
+         * @description A direct-ownership edge: `source` holds `share_percent` of `target`.
          */
         UboEdge: {
             /**
@@ -5218,7 +5209,7 @@ export interface components {
         };
         /**
          * UboReport
-         * @description Response model for `GET /v1/companies/{eu_id}/ubo`.
+         * @description Ultimate beneficial owners and their ownership relationships.
          */
         UboReport: {
             /**
@@ -5260,9 +5251,9 @@ export interface components {
          * WebhookTestAttempt
          * @description One outbound POST inside a webhook test run.
          *
-         *     For ``delivery_scenario=success`` / ``bad_signature`` /
-         *     ``stale_timestamp`` the response carries a single attempt; for
-         *     ``retry_delivery`` it carries two with byte-identical headers and
+         *     For `delivery_scenario=success` / `bad_signature` /
+         *     `stale_timestamp` the response carries a single attempt; for
+         *     `retry_delivery` it carries two with byte-identical headers and
          *     body so the customer can see exactly what duplicate delivery looks
          *     like on the wire.
          */
@@ -5320,7 +5311,7 @@ export interface components {
          * @description Transport-level behaviour the test endpoint should exhibit.
          *
          *     Independent of :attr:`SubscriptionTestRequest.scenario`, which picks
-         *     the *kind* of notification (today only ``change``). This field
+         *     the *kind* of notification (today only `change`). This field
          *     picks how that notification is *delivered* so receivers can
          *     integration-test their HMAC, replay-window, and idempotent-dedupe
          *     paths against firmendata's real wire format.
@@ -5357,7 +5348,7 @@ export interface components {
             object: "company_website";
             /**
              * Verification
-             * @description How the company↔website link was proven: `register` (register code found in the Impressum), `lei`, `linkedin_domain` (LinkedIn declares the domain), `name_unique`, or `unverified`.
+             * @description Evidence associating the website with the company: `register` (register reference in the Impressum), `lei` (LEI record), `linkedin_domain` (the website stated on the company's LinkedIn page), `name_unique` (unique company name), or `unverified`.
              * @default unverified
              */
             verification: string;
@@ -5387,7 +5378,7 @@ export interface components {
             object: "wz_2025_score";
             /**
              * Score
-             * @description Classifier confidence for this code, from 0 (none) to 1 (certain), rounded to three decimals. Meaningful for ranking a company's candidate codes against each other; not calibrated as a probability.
+             * @description Confidence score for this code, from 0 (none) to 1 (certain), rounded to three decimals. Meaningful for ranking a company's candidate codes against each other; not calibrated as a probability.
              * @example 0.157
              */
             score?: number | null;
@@ -5415,7 +5406,7 @@ export interface operations {
                 limit?: number;
                 /** @description Restrict all suggestions to the company register: DE, CH or AT. Case-insensitive; omitted searches all countries. */
                 country?: ("DE" | "CH" | "AT") | null;
-                /** @description When `true`, search the German company registers live for the keyword first and index any hits not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Adds upstream latency (typically a few seconds) and a higher credit cost. Scraping failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
+                /** @description When `true`, search the German company registers live for the keyword and include any companies not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Adds upstream latency (typically a few seconds) and a higher credit cost. Refresh failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -5445,12 +5436,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -5470,6 +5471,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -5497,6 +5499,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -5516,6 +5519,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -5532,7 +5536,7 @@ export interface operations {
             query?: {
                 /** @description Unified keyword, tried as an eu_id, then a company-name prefix, then a person name — falling through whenever a phase returns nothing. Overrides `company_name`, `eu_id` and `person_name` when supplied alongside them. */
                 q?: string | null;
-                /** @description Company name prefix, matched against the folded legal name with quotes and invisible characters stripped — `Müller "Süd" GmbH` and `Müller Süd GmbH` hit the same row. The legal-form suffix is kept, so `Bosch GmbH` narrows against `Bosch`. */
+                /** @description Company name prefix, ignoring case, accents, quotes and invisible characters — `Müller "Süd" GmbH` and `Müller Süd GmbH` match the same company. The legal-form suffix is kept, so `Bosch GmbH` narrows against `Bosch`. */
                 company_name?: string | null;
                 /** @description Exact eu_id lookup (no prefix expansion). */
                 eu_id?: string | null;
@@ -5597,7 +5601,7 @@ export interface operations {
                 /** @description Maximum average birth year across the company's associated persons. */
                 avg_birth_year_max?: number | null;
                 /**
-                 * @description Company lifecycle status, resolved from the merged Handelsregister (SI + CD) and Insolvenzbekanntmachungen timelines, plus SHAB KK/NA notices for Swiss companies. Multi-valued.
+                 * @description Company lifecycle status according to the commercial register and insolvency notices, including Swiss Official Gazette of Commerce (SHAB) bankruptcy and composition notices. Multi-valued.
                  *
                  *     - `active` — no insolvency or dissolution on record
                  *     - `insolvent` — proceedings open or preliminary measures in force
@@ -5638,7 +5642,7 @@ export interface operations {
                 has_website?: boolean | null;
                 /** @description Restrict to companies with (`true`) or without (`false`) a known email. */
                 has_email?: boolean | null;
-                /** @description Also search the German registers live for `q` / `company_name` (one is required with this flag) and append any companies not yet indexed, carrying identity and seat only. First page only. Adds a few seconds of latency and costs more credits; scraping failures never fail the request — check `freshness.realtime_fetching_status`. */
+                /** @description Also search the German registers live for `q` / `company_name` (one is required with this flag) and append any companies not yet known to us, carrying identity and seat only. First page only. Adds a few seconds of latency and costs more credits; refresh failures never fail the request — check `freshness.realtime_fetching_status`. */
                 fetch_realtime?: boolean;
                 /**
                  * @description Companies appearing in EU public-procurement notices (TED), in the selected role. Multi-valued.
@@ -5658,7 +5662,7 @@ export interface operations {
                 /**
                  * @description Restrict to companies where a person holding an ownership or governing role at first registration is still in office (`true`), or where the founding officers have all been replaced (`false`).
                  *
-                 *     Requires the chronological register extract, so companies whose history has not been parsed are excluded from both values. Companies whose extract begins with a transfer from another register court are also excluded: their first entry records the move, not the founding.
+                 *     Requires the chronological register extract, so companies whose register history is unavailable are excluded from both values. Companies whose extract begins with a transfer from another register court are also excluded: their first entry records the move, not the founding.
                  */
                 founder_led?: boolean | null;
                 /** @description Restrict to founder-led companies whose oldest serving founder has reached 65 (`true`), or has not (`false`). Companies that are not founder-led, and founders with no birth date on record, are excluded from both values. */
@@ -5691,12 +5695,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -5716,6 +5730,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -5743,6 +5758,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -5762,6 +5778,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -5776,7 +5793,7 @@ export interface operations {
     getCompanyDetail: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the company's register snapshot from the German registries before building the response, so the underlying data is as fresh as possible. Adds upstream latency (typically several seconds). Scraping failures are logged but do not fail the request — the most recent indexed data is returned instead. The chronological register history is refreshed by `/v1/companies/{eu_id}/history` instead — this endpoint does not refresh it. */
+                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the company's register snapshot from the German registries before building the response, so the underlying data is as fresh as possible. Adds upstream latency (typically several seconds). Refresh failures do not fail the request — the most recent available data is returned instead. The chronological register history is refreshed by `/v1/companies/{eu_id}/history` instead — this endpoint does not refresh it. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -5809,12 +5826,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -5828,6 +5855,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -5853,6 +5881,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -5880,6 +5909,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -5899,6 +5929,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -5943,12 +5974,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -5962,6 +6003,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -5987,6 +6029,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6014,6 +6057,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6033,6 +6077,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -6051,7 +6096,7 @@ export interface operations {
                 file_type: "register_extract_current" | "register_extract_chronological" | "shareholder_list" | "articles_of_association" | "company_registration" | "model_protocol";
                 /** @description Specific document id (as returned in the company detail `documents[]` block). Defaults to the latest published file of `file_type` when omitted. */
                 file_id?: string | null;
-                /** @description Specific DK catalog version from the live document list. Cannot be combined with `file_id` or `fetch_realtime=true`. */
+                /** @description Specific document version from the live document list. Cannot be combined with `file_id` or `fetch_realtime=true`. */
                 document_id?: string | null;
                 /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, fetch the requested `file_type` from the German registries before resolving the file, so the presigned URL points at the freshest version. Adds upstream latency (typically several seconds). Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
@@ -6086,12 +6131,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6105,6 +6160,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -6130,6 +6186,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6157,6 +6214,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6176,6 +6234,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -6230,12 +6289,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6249,6 +6318,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -6274,6 +6344,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6301,6 +6372,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6320,6 +6392,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -6334,7 +6407,7 @@ export interface operations {
     getCompanyHistory: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the chronological register history from the German registries before responding. Adds upstream latency (typically several seconds). Scraping failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the chronological register history from the German registries before responding. Adds upstream latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -6367,12 +6440,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6386,6 +6469,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -6411,6 +6495,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6438,6 +6523,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6457,6 +6543,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -6471,7 +6558,7 @@ export interface operations {
     getCompanyShareholders: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, scrape the Liste der Gesellschafter from the German registries and re-parse it before responding. Adds upstream latency (typically several seconds). Scraping failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, retrieve the current shareholder list from the German register before responding. Adds latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -6504,12 +6591,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6523,6 +6620,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -6548,6 +6646,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6575,6 +6674,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6594,6 +6694,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -6641,12 +6742,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6660,6 +6771,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -6685,6 +6797,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6712,6 +6825,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6731,6 +6845,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -6742,7 +6857,7 @@ export interface operations {
             };
         };
     };
-    poll_insolvencies_v1_feeds_insolvencies_get: {
+    pollInsolvencies: {
         parameters: {
             query?: {
                 /** @description Persistent discovery cursor from the previous response's next_cursor. */
@@ -6797,12 +6912,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6822,6 +6947,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6849,6 +6975,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6868,6 +6995,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -6879,7 +7007,7 @@ export interface operations {
             };
         };
     };
-    poll_new_companies_v1_feeds_new_companies_get: {
+    pollNewCompanies: {
         parameters: {
             query?: {
                 /** @description Persistent discovery cursor from the previous response's next_cursor. */
@@ -6928,12 +7056,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6953,6 +7091,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -6980,6 +7119,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -6999,6 +7139,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7040,6 +7181,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -7065,6 +7207,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -7092,6 +7235,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -7111,6 +7255,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7129,7 +7274,7 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque pagination cursor. Pass the `pagination.next_cursor` from a previous response to fetch the next page. */
                 cursor?: string | null;
-                /** @description Order the list by a column instead of by when companies were added. Same vocabulary as `/companies/search`. */
+                /** @description Order the list by a company attribute instead of by when companies were added. Same vocabulary as `/companies/search`. */
                 sort?: components["schemas"]["Sort"] | null;
                 /** @description Sort direction; applies only with `sort`. */
                 sort_direction?: components["schemas"]["SortDirection"];
@@ -7164,6 +7309,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -7183,6 +7329,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -7208,6 +7355,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -7235,6 +7383,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -7254,6 +7403,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7308,6 +7458,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -7333,6 +7484,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -7360,6 +7512,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -7379,6 +7532,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7424,12 +7578,22 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not enough credits for this call; top up or upgrade your plan */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -7443,6 +7607,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -7462,6 +7627,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A subscription for this company, type, and notification channel already exists.",
                      *       "instance": "/v1/subscriptions",
+                     *       "message": "A subscription for this company, type, and notification channel already exists.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 409,
                      *       "title": "Conflict.",
@@ -7487,6 +7653,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -7514,6 +7681,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -7533,6 +7701,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7576,6 +7745,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -7595,6 +7765,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -7620,6 +7791,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -7647,6 +7819,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -7666,6 +7839,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7709,6 +7883,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -7728,6 +7903,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -7753,6 +7929,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -7780,6 +7957,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -7799,6 +7977,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7844,6 +8023,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -7869,6 +8049,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -7896,6 +8077,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -7915,6 +8097,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -7958,6 +8141,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -7977,6 +8161,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -8002,6 +8187,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -8029,6 +8215,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -8048,6 +8235,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -8089,6 +8277,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -8108,6 +8297,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -8133,6 +8323,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -8160,6 +8351,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -8179,6 +8371,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",
@@ -8229,6 +8422,7 @@ export interface operations {
                      * @example {
                      *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 401,
                      *       "title": "Authentication required.",
@@ -8248,6 +8442,7 @@ export interface operations {
                      * @example {
                      *       "detail": "No company with id DEF1103R.HRB999999B.",
                      *       "instance": "/v1/companies/DEF1103R.HRB999999B",
+                     *       "message": "No company with id DEF1103R.HRB999999B.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 404,
                      *       "title": "Resource not found.",
@@ -8273,6 +8468,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "instance": "/v1/companies/search",
+                     *       "message": "limit: Input should be less than or equal to 50",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 422,
                      *       "title": "Request validation failed.",
@@ -8300,6 +8496,7 @@ export interface operations {
                      * @example {
                      *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 429,
                      *       "title": "Too many requests.",
@@ -8319,6 +8516,7 @@ export interface operations {
                      * @example {
                      *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
                      *       "request_id": "req_01HXYZABC123DEF456GHI789J",
                      *       "status": 500,
                      *       "title": "Internal server error.",

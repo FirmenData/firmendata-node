@@ -1,6 +1,6 @@
 /**
  * Official TypeScript/JavaScript client for the firmendata
- * German and Swiss company-data API.
+ * German, Swiss and Austrian company-data API. For server-side use.
  *
  * Autocomplete is free and needs no API key:
  *
@@ -12,8 +12,17 @@
  * ```
  */
 
-export { FirmenData, DEFAULT_BASE_URL, DEFAULT_TIMEOUT_MS } from './client.js';
-export type { FirmenDataOptions } from './client.js';
+export {
+  FirmenData,
+  DEFAULT_BASE_URL,
+  DEFAULT_TIMEOUT_MS,
+  REALTIME_TIMEOUT_MS,
+  SEARCH_RESULT_CAP,
+} from './client.js';
+export type { AppInfo, FirmenDataOptions, LiveCallOptions, ResponseInfo } from './client.js';
+export { FeedIterator } from './feeds.js';
+export type { FeedCursorQuery, FeedPage } from './feeds.js';
+export { VERSION } from './version.js';
 
 export {
   FirmenDataError,

@@ -2,16 +2,70 @@
 
 ## 1.3.0
 
-- Regenerated types from the updated API contract.
-- `autocomplete()` accepts an optional `country` (`DE`, `CH` or `AT`).
-- Added Beta `feedNewCompanies()` and `feedInsolvencies()` methods with
-  schema-derived query, response and event types.
-- Added `iterateFeedNewCompanies()` and `iterateFeedInsolvencies()` async
-  iterators that page until caught up and return the final cursor for resuming.
-- Both feeds accept `register_court` (German Registergericht or Austrian
-  Firmenbuch court names, repeated values combined with OR); on the insolvency
-  feed it filters by the company's register court, not the insolvency court.
-- Documented feed polling, cursor persistence, event deduplication and billing.
+Regenerated from the updated API contract. Additive, except where noted for
+`getFinancials()`.
+
+**Coverage and fields**
+
+- Austria: `country: 'AT'`, the Austrian register type (`AT-FB`), Firmenbuch
+  courts in `register_court`, the Austrian states in `bundesland`, and
+  Austrian legal forms.
+- `autocomplete()` accepts an optional `country` (`DE`, `CH` or `AT`);
+  autocomplete hits include `registered_seat`.
+- Company contact details include `phones` (phone and fax numbers) and
+  `primary_email`.
+- Financial summaries include `latest_equity`; each year in `history.metrics`
+  carries its top-level `balance_sheet` and `income_statement` positions.
+- Error messages fall back to the problem's new `message` field, which
+  `Problem` now declares.
+
+**New methods**
+
+- Beta event feeds: `feedNewCompanies()` and `feedInsolvencies()`, with
+  schema-derived query, response and event types. Both accept
+  `register_court` (German Registergericht or Austrian Firmenbuch court names,
+  repeated values combined with OR); on the insolvency feed it filters by the
+  company's register court, not the insolvency court.
+- `iterateFeedNewCompanies()` and `iterateFeedInsolvencies()` return a
+  `FeedIterator`: use it with `for await`, events are deduplicated on `id`
+  within the run, and `nextCursor` holds the cursor of the last fully consumed
+  page (including empty pages) to persist and resume from.
+- `getLists()` and `getList(listId, { limit, cursor, sort, sort_direction })`
+  read your company lists. Both are free.
+- `searchAll(filters, { maxResults })` yields every search hit, following
+  `next_cursor` with only the cursor and `limit` after the first page, and
+  stops at `has_more: false`, `maxResults` or 10,000 results. Each page of up
+  to 50 results costs 1 credit.
+- `testDelivery()` and `resendEvent()` are typed from the contract
+  (`SubscriptionTestRequest` / `SubscriptionTestResponse`,
+  `SubscriptionEventResendResponse`) instead of `unknown`.
+
+**Financials**
+
+- `getFinancials()` takes `details`. The API now returns the full line items
+  by default; pass `details: false` for the lean response. `includeLineItems`
+  is deprecated and sent as `details` (it no longer sends `include=line_items`).
+  Calls that passed nothing now receive the full line items, as the API does.
+
+**Client behaviour**
+
+- Every request sends `X-FirmenData-Client: node-sdk/<version>`. On Node the
+  `User-Agent` is `firmendata-node/<version> node/<node version>`; it is never
+  set in a browser-like runtime. The new `appInfo: { name, version?, url? }`
+  option appends your integration to it. `VERSION` is exported.
+- New `onResponse` option: called for every HTTP response with `status`,
+  `headers`, `requestId` and `creditsCharged`.
+- Realtime calls (`fetchRealtime: true`), document listings and downloads are
+  no longer retried after a timeout, a gateway timeout or a connection that
+  broke after the request was sent — the server bills them when it finishes,
+  so a retry could be billed twice. Their timeout is at least 150 seconds
+  (`REALTIME_TIMEOUT_MS`) unless the call passes its own `timeoutMs`, which the
+  live-capable methods now accept.
+- A `429` whose `Retry-After` exceeds 20 seconds throws `RateLimitError` at
+  once, with `retryAfter` in seconds, instead of waiting 20 seconds per retry
+  and failing anyway.
+- The README documents the SDK as server-side only: browser calls from
+  third-party sites are blocked by CORS.
 
 ## 1.2.1
 

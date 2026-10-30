@@ -1,32 +1,18 @@
 # Publishes to npm on a version tag, with a provenance attestation.
 #
-# ─── AUTHENTICATION: read this before the first release ────────────────────
+# ─── AUTHENTICATION ────────────────────────────────────────────────────────
 #
-# npm cannot attach a trusted publisher to a package that does not exist yet
-# (npm/cli#8544). PyPI can; npm cannot. So this takes two steps:
-#
-#   FIRST RELEASE — set an NPM_TOKEN secret:
-#     npmjs.com → Access Tokens → Generate → Granular Access Token, scoped to
-#     the `firmendata` package with read+write. Add it as the repo secret
-#     NPM_TOKEN. The step below picks it up automatically.
-#
-#   AFTER THAT — switch to OIDC and delete the token:
-#     npmjs.com → the package → Settings → Trusted Publisher → GitHub Actions
-#       Organization/user: FirmenData
-#       Repository:        firmendata-node
-#       Workflow filename: publish.yml
-#       Environment:       npm
-#     Then delete the NPM_TOKEN secret. The step is written so that removing
-#     the secret is the only action required — with no token present, npm
-#     falls back to the OIDC exchange.
-#
-# Provenance is signed by GitHub's OIDC infrastructure either way, so the
-# first release is attested too. `id-token: write` below is what makes that
-# possible and is not optional.
+# npm trusted publishing (OIDC). There is no npm token anywhere: GitHub mints
+# a short-lived credential per run, and npm verifies it came from this
+# repository, this workflow file and the `npm` environment (configured under
+# the package's Settings → Trusted Publisher on npmjs.com). The same OIDC
+# token signs the provenance attestation, so `id-token: write` below is not
+# optional.
 #
 # ─── RELEASING ─────────────────────────────────────────────────────────────
 #
-#   1. bump "version" in package.json
+#   1. bump "version" in package.json, then `npm run generate:version`
+#      (src/version.ts must match; the check below fails otherwise)
 #   2. commit, then:  git tag 0.1.0 && git push origin 0.1.0
 #
 # A published version can never be reused, even after `npm unpublish`.
@@ -47,8 +33,7 @@ jobs:
     environment: npm
     permissions:
       contents: read
-      # Mints the OIDC token used for provenance, and for trusted publishing
-      # once that is configured.
+      # Mints the OIDC token used for trusted publishing and provenance.
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -57,9 +42,8 @@ jobs:
           # `lts/*`, not a pinned 22: trusted publishing needs npm >= 11.5.1
           # and Node 22.23.2 ships npm **10.9.8**. The 0.2.0 release failed on
           # exactly that — npm never attempted the OIDC exchange and went
-          # straight to `ENEEDAUTH`, with no NPM_TOKEN configured to fall back
-          # to. The sibling n8n-nodes-firmendata workflow already used `lts/*`
-          # and published the same tag without trouble.
+          # straight to `ENEEDAUTH`. The sibling n8n-nodes-firmendata workflow
+          # already used `lts/*` and published the same tag without trouble.
           node-version: 'lts/*'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
@@ -77,7 +61,7 @@ jobs:
       # The committed types must match the vendored contract, or we ship an
       # SDK that misdescribes the API.
       - run: npm run generate
-      - run: git diff --exit-code -- src/schema.ts
+      - run: git diff --exit-code -- src/schema.ts src/version.ts
 
       - name: Tag must match the package version
         if: github.event_name == 'push'
@@ -94,6 +78,6 @@ jobs:
       - name: Publish
         run: npm publish --provenance --access public
         env:
-          # Present for the first release, absent afterwards — npm uses the
-          # OIDC exchange when this is empty.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Deliberately empty: setup-node would otherwise export a placeholder
+          # token. With no token, npm authenticates through the OIDC exchange.
+          NODE_AUTH_TOKEN: ''
