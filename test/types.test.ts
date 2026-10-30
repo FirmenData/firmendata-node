@@ -50,3 +50,26 @@ describe('SubscriptionCreateRequest', () => {
     expect([...(schema?.required ?? [])].sort()).toEqual(['eu_id', 'subscription_type']);
   });
 });
+
+describe('SubscriptionTestRequest', () => {
+  const schema = spec.components.schemas.SubscriptionTestRequest;
+
+  it('re-optionalises every property the API defaults', () => {
+    const required = new Set(schema?.required ?? []);
+    const defaultedButOptional = Object.entries(schema?.properties ?? {})
+      .filter(([name, prop]) => 'default' in prop && !required.has(name))
+      .map(([name]) => name)
+      .sort();
+
+    // Keep in sync with SubscriptionTestRequestDefaults in src/types.ts.
+    expect(defaultedButOptional).toEqual(['delivery_scenario', 'language', 'scenario']);
+  });
+
+  it('still requires the three properties the API requires', () => {
+    expect([...(schema?.required ?? [])].sort()).toEqual([
+      'eu_id',
+      'notification_type',
+      'subscription_type',
+    ]);
+  });
+});

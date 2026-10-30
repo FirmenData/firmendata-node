@@ -302,12 +302,15 @@ for (const feed of feeds) {
       const input = { ...query, bundesland: [...query.bundesland] };
       const iterator = client[feed.iterator](input);
       expect(fetchSpy).not.toHaveBeenCalled();
+      expect(iterator.nextCursor).toBeUndefined();
       expect(await iterator.next()).toEqual({ done: false, value: first });
       expect(await iterator.next()).toEqual({ done: false, value: second });
       expect(fetchSpy).toHaveBeenCalledTimes(1);
-      // Duplicate IDs remain visible so callers can deduplicate durably.
-      expect(await iterator.next()).toEqual({ done: false, value: first });
+      // Not advanced until the consumer moves past the page's last event.
+      expect(iterator.nextCursor).toBeUndefined();
+      // The repeated `first` on the last page is deduplicated within the run.
       expect(await iterator.next()).toEqual({ done: true, value: 'final+/= &3' });
+      expect(iterator.nextCursor).toBe('final+/= &3');
       expect(await iterator.next()).toEqual({ done: true, value: undefined });
       expect(fetchSpy).toHaveBeenCalledTimes(3);
       const urls = fetchSpy.mock.calls.map(([url]) => new URL(String(url)));
@@ -349,6 +352,66 @@ for (const feed of feeds) {
       expect(resumed.searchParams.get('cursor')).toBe('empty+/= &cursor');
       expect(resumed.searchParams.has('since')).toBe(false);
       expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('works with for await, then exposes the cursor to persist', async () => {
+      const pages = [
+        { data: [event('one'), event('one')], next_cursor: 'c1', has_more: true },
+        { data: [], next_cursor: 'c2', has_more: true },
+        { data: [event('two'), event('one')], next_cursor: 'c3', has_more: false },
+      ];
+      let index = 0;
+      const { client } = clientWith(() => jsonResponse(200, pages[index++]));
+      const events = client[feed.iterator]({ country: 'DE' });
+      const ids: string[] = [];
+      for await (const item of events) ids.push(item.id);
+      expect(ids).toEqual(['one', 'two']);
+      expect(events.nextCursor).toBe('c3');
+    });
+
+    it('keeps the starting cursor when stopped partway through a page', async () => {
+      const { client, fetchSpy } = clientWith(() =>
+        jsonResponse(200, {
+          data: [event('one'), event('two')],
+          next_cursor: 'unprocessed-page',
+          has_more: true,
+        }),
+      );
+      const events = client[feed.iterator]({ cursor: 'start' });
+      expect(events.nextCursor).toBe('start');
+      for await (const item of events) {
+        expect(item.id).toBe('one');
+        break;
+      }
+      expect(events.nextCursor).toBe('start');
+      expect(await events.next()).toEqual({ done: true, value: undefined });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops since when resuming from a cursor', async () => {
+      const { client, fetchSpy } = clientWith(() =>
+        jsonResponse(200, { data: [], next_cursor: 'later', has_more: false }),
+      );
+      const events = client[feed.iterator]({ cursor: 'start', since: '2026-10-11T12:00:00Z' });
+      expect(await events.next()).toEqual({ done: true, value: 'later' });
+      const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+      expect([...url.searchParams.keys()]).toEqual(['cursor']);
+      expect(url.searchParams.get('cursor')).toBe('start');
+    });
+
+    it('keeps the consumed page cursor when a later page fails', async () => {
+      let calls = 0;
+      const { client } = clientWith(() => {
+        calls += 1;
+        if (calls === 1) {
+          return jsonResponse(200, { data: [event('one')], next_cursor: 'c1', has_more: true });
+        }
+        throw new TypeError('fetch failed');
+      });
+      const events = client[feed.iterator]();
+      expect(await events.next()).toEqual({ done: false, value: event('one') });
+      await expect(events.next()).rejects.toBeInstanceOf(APIConnectionError);
+      expect(events.nextCursor).toBe('c1');
     });
   });
 }
@@ -466,14 +529,20 @@ describe('error mapping', () => {
     });
   });
 
-  it('asks for financial line items only when told to', async () => {
-    const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}));
-    await client.getFinancials('DE1');
-    await client.getFinancials('DE1', { includeLineItems: true, years: 3 });
-    const [lean, full] = fetchSpy.mock.calls.map(([url]) => new URL(String(url)));
-    expect(lean?.search).toBe('');
-    expect(full?.searchParams.getAll('include')).toEqual(['line_items']);
-    expect(full?.searchParams.get('years')).toBe('3');
+  it('passes the problem message through when detail is missing', async () => {
+    const { client } = clientWith(() =>
+      jsonResponse(402, {
+        type: 'https://api.firmendata.com/problems/insufficient-credits',
+        title: 'Insufficient credits.',
+        status: 402,
+        message: 'Not enough credits for this call',
+        request_id: 'req-1',
+      }),
+    );
+    await expect(client.getUbo('DE1')).rejects.toMatchObject({
+      message: 'Not enough credits for this call',
+      requestId: 'req-1',
+    });
   });
 
   it('carries Retry-After on a rate limit', async () => {

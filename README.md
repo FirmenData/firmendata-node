@@ -1,9 +1,10 @@
 # firmendata
 
 Official TypeScript/JavaScript client for the [firmendata](https://firmendata.com)
-API — German and Swiss company data from the Unternehmensregister,
-Handelsregister and Swiss commercial register: register search, parsed annual financial statements, company
-profiles, register documents, and ownership chains for KYC.
+API — German, Swiss and Austrian company data from the Unternehmensregister,
+Handelsregister, the Swiss commercial register and the Austrian Firmenbuch:
+register search, parsed annual financial statements, company profiles,
+register documents, and ownership chains for KYC.
 
 [![npm](https://img.shields.io/npm/v/firmendata)](https://www.npmjs.com/package/firmendata)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,8 +14,13 @@ npm install firmendata
 ```
 
 **Zero runtime dependencies.** Built on the platform `fetch`, so it runs
-unchanged on Node 18+, Bun, Deno, Cloudflare Workers and in the browser, and
-adds nothing to your dependency tree.
+unchanged on Node 18+, Bun, Deno and Cloudflare Workers, and adds nothing to
+your dependency tree.
+
+**For server-side use.** The API does not accept browser calls from
+third-party sites (CORS blocks them), and an API key shipped to a browser
+would be public anyway. Call it from your backend, a serverless function or a
+worker, and pass the results on to your frontend.
 
 ## Try it without signing up
 
@@ -32,14 +38,14 @@ for (const hit of data) {
 ```
 
 Keyless calls are rate limited, modestly and by address — enough to try the
-API, back a search box, or run low-volume queries. Add a key for substantially
-higher limits plus every other endpoint. On a `429`, honour `Retry-After`; the
-client already does this for you.
+API or run low-volume queries. Add a key for substantially higher limits plus
+every other endpoint. On a `429`, honour `Retry-After`; the client already
+does this for you (see [Retries](#retries)).
 
 Limit suggestions to a country with `fd.autocomplete('siemens', { country: 'DE' })`.
 `country` also accepts `CH` and `AT`; omit it to search across countries.
 
-Create a key at [firmendata.com](https://firmendata.com/de/account/api-keys) —
+Create a key at [firmendata.com](https://firmendata.com/de/developer/api-keys) —
 the free plan includes 100 credits.
 
 ```ts
@@ -48,8 +54,8 @@ const fd = new FirmenData({ apiKey: process.env.FIRMENDATA_API_KEY });
 
 ## Search the register
 
-The main entry point for German and Swiss companies. Different filters
-combine with AND, repeated values with OR.
+The main entry point for German, Swiss and Austrian companies. Different
+filters combine with AND, repeated values with OR.
 
 ```ts
 const results = await fd.search({
@@ -71,9 +77,23 @@ if (results.pagination.has_more) {
 ```
 
 Pass `next_cursor` back unchanged — cursors are opaque and signed, and an
-edited one is rejected. Unknown filter names, unknown values and inverted
+edited one is rejected. A cursor remembers the filters it was issued for, so
+it can be sent alone. Unknown filter names, unknown values and inverted
 ranges (`revenue_min` above `revenue_max`) raise `ValidationError` instead of
 being ignored.
+
+`searchAll()` does the paging for you: it yields every hit, sends only the
+cursor (and `limit`) after the first page, and stops when `has_more` is false,
+after `maxResults` hits, or at the 10,000 results a query can return. **Each
+page of up to 50 results costs 1 credit**, like a `search()` call — set
+`maxResults`, or `break` out of the loop, to stop paying for pages you do not
+need.
+
+```ts
+for await (const hit of fd.searchAll({ bundesland: ['Bayern'] }, { maxResults: 500 })) {
+  console.log(hit.eu_id, hit.display_name);
+}
+```
 
 Values are case-insensitive and tolerate German spelling both ways — `gmbh`,
 `muenchen`, `NRW` and `Bavaria` all resolve. Filter by legal form, legal
@@ -81,17 +101,20 @@ status, register court, federal state, city, industry, founding date, size,
 web presence, connected person or EU public-procurement role; see the
 [filter reference](https://api.firmendata.com/v1/docs#tag/Search).
 
-Use `country: 'DE'` or `'CH'` for a single country and `canton: ['ZH', 'BE']`
-for Swiss cantons. `canton` and `bundesland` combine with OR; `rechtsform`
-also accepts Swiss forms such as `'AG (CH)'` and `'GmbH (CH)'`.
+Use `country: 'DE'`, `'CH'` or `'AT'` for a single country and
+`canton: ['ZH', 'BE']` for Swiss cantons. `canton` and `bundesland` combine
+with OR, and `bundesland` also takes the Austrian states (`'Wien'`, `'Tirol'`,
+…). `rechtsform` also accepts Swiss and Austrian forms such as `'AG (CH)'`,
+`'GmbH (CH)'` and `'GmbH (AT)'`, and `register_court` the Austrian Firmenbuch
+courts (`'Handelsgericht Wien'`, …).
 
 ```ts
 const swiss = await fd.search({ country: 'CH', canton: ['ZH', 'BE'], sort: 'name' });
 ```
 
 `sort: 'name'` defaults to ascending. Company profiles, search/list rows and
-autocomplete hits include `country_code` (`'DE'` or `'CH'`); search hits also
-include `registered_seat`.
+autocomplete hits include `country_code` (`'DE'`, `'CH'` or `'AT'`); search
+and autocomplete hits also include `registered_seat`.
 
 `company_size` accepts `['kleinst', 'klein', 'mittelgross']` under § 267 / § 267a
 HGB. Use `company_size: ['kleinst']` for micro companies
@@ -106,39 +129,46 @@ HGB. Use `company_size: ['kleinst']` for micro companies
 ## Company profile
 
 ```ts
-const euId = 'DEB1103R_HRB123456'; // from search or autocomplete
+const euId = 'DEF1103R.HRB12300B'; // from search or autocomplete
 
 const company = await fd.getCompany(euId);
 const history = await fd.getHistory(euId); // chronological register entries
 ```
 
-Identity and seat, register reference, legal status resolved from the merged
-Handelsregister and Insolvenzbekanntmachungen timelines, industry
-classification, contact details and web presence.
+Identity and seat, register reference, legal status from the commercial
+register and insolvency notices, industry classification, contact details
+(including `phones` and `primary_email`) and web presence.
 
 ## Financial statements
 
 Filed annual accounts, parsed into figures rather than handed to you as PDFs.
-The deepest part of the dataset: German companies must publish, and we parse
-what they file into structured multi-year figures.
+The deepest part of the dataset: companies in Germany and Austria must publish
+their accounts, and we parse what they file into structured multi-year
+figures.
 
 ```ts
 const { summary, history } = await fd.getFinancials(euId);
 
-console.log(summary?.latest_fiscal_year, summary?.latest_total_assets);
+console.log(summary?.latest_fiscal_year, summary?.latest_total_assets, summary?.latest_equity);
 
 for (const year of history.metrics) {
   console.log(year.year, year.balance_sheet_total, year.revenue, year.profit);
 }
 ```
 
-The response is lean by default. The structured `profit_and_loss`, `assets`
-and `liabilities_and_equity` rows as filed are opt-in, and `years` trims every
+By default the response carries every filed `profit_and_loss`, `assets` and
+`liabilities_and_equity` row at every depth — often 100 KB or more for
+groups. Pass `details: false` for the lean response: those arrays stay empty,
+and each year in `history.metrics` keeps its top-level `balance_sheet` and
+`income_statement` positions. Both cost the same. `years` trims every
 per-year array to the most recent fiscal years:
 
 ```ts
-const full = await fd.getFinancials(euId, { includeLineItems: true, years: 5 });
+const lean = await fd.getFinancials(euId, { details: false, years: 5 });
 ```
+
+`includeLineItems` from earlier versions still works but is deprecated: it is
+sent as `details`.
 
 `employee_history` and the underlying `financial_publications` are always
 included; `relationships.subsidiaries` lists the first 25, with
@@ -170,9 +200,9 @@ Aktueller and Chronologischer Abdruck, Gesellschafterliste, Satzung,
 Anmeldung and Musterprotokoll, as presigned download URLs.
 
 `listDocuments(euId)` returns a `CompanyDocumentList` after a live registry
-check, including older DK versions, labels, dates, `is_latest`, `stored`,
+check, including older versions, labels, dates, `is_latest`, `stored`,
 `file_id`, `fetched_at` and `is_outdated`, plus `coverage`, `freshness` and
-`country_code`. It costs 5 credits; Swiss companies, empty catalogs and
+`country_code`. It costs 5 credits; Swiss companies, empty lists and
 unreachable registries are unbilled. Swiss companies return an empty list
 with `coverage.status: 'not_applicable'`.
 
@@ -181,14 +211,17 @@ download that version. Omit `documentId` for the latest version; it cannot
 be combined with `fileId` or `fetchRealtime: true`. Register extracts have
 no `document_id` and are downloaded by `fileType`.
 
+Document listings and downloads are live calls — see
+[Realtime calls](#realtime-calls).
+
 ## Ownership: shareholders and UBO
 
 Cap tables and beneficial-owner chains, for **KYC and AML workflows**.
 
 **Pass `fetchRealtime: true` on both of these.** Unlike the endpoints above,
-which read an index we keep continuously fresh, cap tables are parsed from the
-filed Gesellschafterliste on demand — the flag fetches and parses the current
-filing for the company (and, for `getUbo`, every German company in its
+which answer from data we keep continuously up to date, cap tables are parsed
+from the filed Gesellschafterliste on demand — the flag fetches and parses the
+current filing for the company (and, for `getUbo`, every German company in its
 ownership chain). Without it you are limited to whatever has already been
 parsed, and will often get `not_filed` for a company that has in fact filed.
 It costs more credits and takes a few seconds per company in the chain, which
@@ -231,13 +264,32 @@ console.log(ubo.coverage.status, ubo.beneficial_owners);
   independently tested against the 25% threshold, so a sub-threshold link
   breaks the chain entirely.
 
+## Realtime calls
+
+Calls with `fetchRealtime: true` (`autocomplete`, `getCompany`,
+`getShareholders`, `getUbo`, `getHistory`, `downloadDocument`), searches with
+`fetch_realtime: true`, `listDocuments` and every `downloadDocument` reach the
+registers live. Realtime calls cost more credits (see
+[pricing](https://firmendata.com/en/plans)) and can take up to about two
+minutes. They are **billed when the server finishes them, even if your client
+has already given up**, so the client treats them differently:
+
+- It waits at least 150 seconds (`REALTIME_TIMEOUT_MS`) for them, or your
+  client `timeoutMs` if that is longer. A `timeoutMs` passed to the call
+  itself always wins: `fd.getUbo(euId, { fetchRealtime: true, timeoutMs: 60_000 })`.
+- It **never retries one after a timeout**, or after a connection that broke
+  once the request was sent — the retry could be billed a second time. It
+  throws `APITimeoutError` (or `APIConnectionError`) instead; the call may
+  still have completed and been billed.
+
 ## Event feeds (Beta)
 
 `feedNewCompanies(query)` and `feedInsolvencies(query)` return one page with
 `data`, `next_cursor` and `has_more`. An API key is required. Pass `next_cursor`
 back unchanged and persist it even after an empty page. When `has_more` is true,
 page again immediately; otherwise poll later. A page with events costs 1 credit;
-empty pages are free. Deduplicate events on `id`, as reparsing can resurface them.
+empty pages are free. Deduplicate events on `id`: the same event can appear
+more than once.
 
 On the first call, optionally set `since` to an ISO datetime within the last
 7 days (default: the last day). Use `cursor` on subsequent calls. `limit` accepts
@@ -249,13 +301,15 @@ companies with `canton`. On the insolvency feed it is the company's register
 court, not the insolvency court.
 Insolvencies also accepts `category`, `revenue_min` and `revenue_max`, and defaults
 to country `DE`. Request `Schuldenruf` explicitly with `category` to include it.
-Cursors survive deploys and restarts, but positions expire after 7 days; restart
+Cursors survive restarts, but positions expire after 7 days; restart
 with a recent `since` if expired. Keep filters unchanged when resuming.
 
-The async iterators `iterateFeedNewCompanies(query)` and
-`iterateFeedInsolvencies(query)` yield events, page while `has_more` is true, then
-return the final cursor. Use `.next()` to capture that return value; `for await`
-discards it. For example, poll new companies once a minute:
+The iterators `iterateFeedNewCompanies(query)` and `iterateFeedInsolvencies(query)`
+yield events while `has_more` is true, deduplicating event IDs within the run.
+Afterwards, persist their `nextCursor` and pass it back as `cursor`. It only
+advances past fully consumed pages, including empty ones: stop partway
+through a page and it stays at that page's start, so the next run replays it.
+For example, poll new companies once a minute:
 
 ```ts
 const fd = new FirmenData({ apiKey: process.env.FIRMENDATA_API_KEY });
@@ -264,21 +318,40 @@ const seen = new Set<string>(); // Use durable event IDs in production.
 
 for (;;) {
   const events = fd.iterateFeedNewCompanies({ cursor, country: 'DE' });
-  let result = await events.next();
-  while (result.done === false) {
-    const event = result.value;
+  for await (const event of events) {
     if (!seen.has(event.id)) {
       console.log(event.id, event.company.name);
       seen.add(event.id);
     }
-    result = await events.next();
   }
-  cursor = result.value; // Persist after processing, even if no events arrived.
+  cursor = events.nextCursor; // Persist after processing, even if no events arrived.
   await new Promise((resolve) => setTimeout(resolve, 60_000));
 }
 ```
 
 To poll insolvencies, use `iterateFeedInsolvencies` with its own saved cursor.
+
+## Lists
+
+Company lists you build in the web app are readable through the API, for
+free:
+
+```ts
+const lists = await fd.getLists(); // newest first
+
+for (const list of lists.data) {
+  console.log(list.list_id, list.name, list.company_count);
+}
+
+const page = await fd.getList(lists.data[0].list_id, { limit: 100, sort: 'revenue' });
+for (const row of page.data) {
+  console.log(row.eu_id, row.display_name); // same shape as search hits
+}
+```
+
+`getList` pages like search: pass `page.pagination.next_cursor` back as
+`cursor`. `sort` orders the whole list before the page is cut. A list id that
+does not exist or is not yours raises `NotFoundError`.
 
 ## Subscriptions
 
@@ -297,6 +370,10 @@ const sub = await fd.createSubscription({
 Webhook bodies are HMAC-SHA256 signed — verify `X-Firmendata-Signature`
 against the secret returned at creation. Omit `notification_type` to poll
 `listEvents()` on your own schedule instead.
+
+Check your receiver before subscribing with
+`fd.testDelivery({ eu_id: euId, subscription_type: 'details', notification_type: 'webhook', webhook_url })`,
+and deliver a past event again with `fd.resendEvent(eventId)`.
 
 ## Errors
 
@@ -317,32 +394,63 @@ try {
 }
 ```
 
-| Error                                    | Status | Meaning                                                    |
-| ---------------------------------------- | ------ | ---------------------------------------------------------- |
-| `AuthenticationError`                    | 401    | Missing/invalid key, or a keyless call used a paid feature |
-| `TokenExpiredError`                      | 401    | Key expired                                                |
-| `InsufficientCreditsError`               | 402    | Balance too low for this call                              |
-| `NotFoundError`                          | 404    | No such company, subscription or event                     |
-| `ConflictError`                          | 409    | Conflicts with existing state                              |
-| `ValidationError`                        | 422    | Bad parameters — see `.errors` (`{ param, message }[]`)    |
-| `RateLimitError`                         | 429    | Retry budget exhausted — see `.retryAfter`                 |
-| `ServerError`                            | 5xx    | Retried automatically for idempotent calls                 |
-| `APIConnectionError` / `APITimeoutError` | —      | No response at all                                         |
+| Error                                    | Status | Meaning                                                        |
+| ---------------------------------------- | ------ | -------------------------------------------------------------- |
+| `AuthenticationError`                    | 401    | Missing/invalid key, or a keyless call used a paid feature     |
+| `TokenExpiredError`                      | 401    | Key expired                                                    |
+| `InsufficientCreditsError`               | 402    | Balance too low for this call                                  |
+| `NotFoundError`                          | 404    | No such company, list, subscription or event                   |
+| `ConflictError`                          | 409    | Conflicts with existing state                                  |
+| `ValidationError`                        | 422    | Bad parameters — see `.errors` (`{ param, message }[]`)        |
+| `RateLimitError`                         | 429    | Retries exhausted, or a long `Retry-After` — see `.retryAfter` |
+| `ServerError`                            | 5xx    | Retried automatically for idempotent calls                     |
+| `APIConnectionError` / `APITimeoutError` | —      | No response at all                                             |
 
 ### Retries
 
 Automatic and deliberately conservative:
 
-- **429 is always retried**, on any method — the server rejects rate-limited
-  calls before the handler runs, so nothing happened and nothing was billed.
-  The server's `Retry-After` is used verbatim.
+- **429 is retried on any method** — the server rejects rate-limited calls
+  before the handler runs, so nothing happened and nothing was billed. The
+  client waits for the server's `Retry-After`, up to 20 seconds. When the
+  server asks for longer — the keyless daily limit can ask for hours — the
+  `RateLimitError` is thrown at once, with `retryAfter` in seconds, instead of
+  holding your call open.
 - **5xx and connection failures are retried only for idempotent methods.** A
   `createSubscription` that times out may already have been applied; replaying
   it would create a second one.
+- **Realtime calls are never retried once they may have reached the server**
+  — see [Realtime calls](#realtime-calls).
 - Backoff is exponential with full jitter, so clients that trip the same limit
   together don't all return at the same instant.
 
 Tune with `new FirmenData({ maxRetries })`; `0` disables it.
+
+## Credits and response metadata
+
+Successful responses carry `X-Credits-Charged`, `X-Request-Id` and the
+`RateLimit-*` headers. Pass `onResponse` to see them: it is called for every
+HTTP response — successes, errors, and responses the client then retries —
+with `status`, `headers` (lower-cased names), `requestId` and
+`creditsCharged`.
+
+```ts
+let creditsUsed = 0;
+
+const fd = new FirmenData({
+  apiKey: process.env.FIRMENDATA_API_KEY,
+  onResponse: ({ status, requestId, creditsCharged, headers }) => {
+    creditsUsed += creditsCharged ?? 0;
+    console.log(status, requestId, creditsCharged, headers['ratelimit-remaining']);
+  },
+});
+
+await fd.search({ q: 'siemens' });
+console.log('credits used so far:', creditsUsed);
+```
+
+The callback may be `async`; the call waits for it. An error it throws
+reaches the caller of the method.
 
 ## Types
 
@@ -364,11 +472,17 @@ SDK cannot silently drift from the API it targets.
 new FirmenData({
   apiKey: '...', // optional — omit for the free autocomplete tier
   baseUrl: '...', // default https://api.firmendata.com
-  timeoutMs: 30_000,
+  timeoutMs: 30_000, // realtime calls wait at least 150_000
   maxRetries: 2,
+  appInfo: { name: 'acme-crm', version: '2.1.0', url: 'https://acme.example' },
+  onResponse: (info) => console.log(info.requestId, info.creditsCharged),
   fetch: customFetch, // injection point for tests or a custom transport
 });
 ```
+
+Every request sends `X-FirmenData-Client: node-sdk/<version>`; on Node the
+`User-Agent` is `firmendata-node/<version> node/<node version>`. `appInfo`
+identifies your integration by appending ` name/version (url)` to it.
 
 ## Development
 

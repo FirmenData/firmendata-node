@@ -9,6 +9,7 @@
  *   "title":  "Insufficient credits.",
  *   "status": 402,
  *   "detail": "Your credit balance is too low for this request.",
+ *   "message": "Your credit balance is too low for this request.",
  *   "instance": "/v1/companies/DEF1103R.HRB279792B/ubo",
  *   "request_id": "8e510d86-..."
  * }
@@ -37,6 +38,8 @@ export interface Problem {
   title?: string;
   status?: number;
   detail?: string;
+  /** Same text as `detail`, for HTTP clients that read a `message` field. */
+  message?: string;
   instance?: string;
   request_id?: string;
   errors?: ValidationIssue[];
@@ -106,9 +109,13 @@ export class ValidationError extends APIError {}
 /** 5xx. Retried automatically for idempotent requests. */
 export class ServerError extends APIError {}
 
-/** Rate limit exceeded; the retry budget was exhausted. */
+/**
+ * Rate limit exceeded. Raised once the retry budget is exhausted, or at once
+ * when the server's `Retry-After` is longer than the client is prepared to
+ * wait between attempts (20 seconds) — the keyless daily cap, for example.
+ */
 export class RateLimitError extends APIError {
-  /** The server's `Retry-After`, in seconds, when it sent one. */
+  /** The server's `Retry-After`, in seconds, when it sent one. Wait this long. */
   readonly retryAfter?: number;
 
   constructor(
@@ -170,7 +177,7 @@ export function buildError(
     BY_STATUS[statusCode] ??
     (statusCode >= 500 ? ServerError : APIError);
 
-  const message = problem.detail ?? problem.title ?? `HTTP ${statusCode}`;
+  const message = problem.detail ?? problem.message ?? problem.title ?? `HTTP ${statusCode}`;
   const init = {
     statusCode,
     problem,
