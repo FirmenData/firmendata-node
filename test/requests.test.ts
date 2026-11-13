@@ -184,6 +184,30 @@ describe('lists', () => {
 });
 
 describe('financials detail level', () => {
+  it('repeats scope keys and sends a single fiscal year', async () => {
+    const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}));
+    await client.getFinancials('DER2707.HRB3910', {
+      scope: ['entity', 'group'],
+      year: 2024,
+    });
+    const url = urlOf(fetchSpy);
+    expect(url.pathname).toBe('/v1/companies/DER2707.HRB3910/financials');
+    expect(url.search).toBe('?scope=entity&scope=group&year=2024');
+  });
+
+  it('leaves validation of year combined with years to the server', async () => {
+    const { client, fetchSpy } = clientWith(() =>
+      jsonResponse(422, problem('validation-error', 422)),
+    );
+    await expect(client.getFinancials('DE1', { year: 2024, years: 3 })).rejects.toMatchObject({
+      statusCode: 422,
+    });
+    expect(Object.fromEntries(urlOf(fetchSpy).searchParams)).toEqual({
+      year: '2024',
+      years: '3',
+    });
+  });
+
   it('leaves the default (full line items) to the server', async () => {
     const { client, fetchSpy } = clientWith(() => jsonResponse(200, {}));
     await client.getFinancials('DE1');

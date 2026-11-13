@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Autocomplete suggestions
-         * @description Companies whose name starts with `q`, from a single character, so a search box can suggest from the first keystroke. Exact core-name matches (ignoring legal-form suffixes) come first, then biggest revenue. From three characters, companies whose name contains `q` as a whole word also rank by revenue. Use `country` to restrict suggestions to a company register. Each hit carries just enough context — company name and register reference — to pick the right result out of a dropdown. Not meant for programmatic search — use `/companies/search` for that.
+         * @description Companies whose name starts with `q`, from a single character, so a search box can suggest from the first keystroke. Exact core-name matches (ignoring legal-form suffixes) come first, then biggest revenue. From three characters, companies whose name contains `q` as a whole word also rank by revenue. A company that publishes no accounts of its own because a parent's consolidated accounts include it (common for German GmbH & Co. KGs) is sized by its group's revenue: among exact matches as if it were its own, otherwise right after the companies with figures of their own — so `Festo` suggests Festo SE & Co. KG first. Use `country` to restrict suggestions to a company register. Each hit carries just enough context — company name and register reference — to pick the right result out of a dropdown. Not meant for programmatic search — use `/companies/search` for that.
          *
          *     **Free without an API key.** This is the only v1 endpoint you can call unauthenticated. Keyless access is rate limited — modestly, and by address — and is intended for trying the API out, for a search box, or for low-volume use. Send an `Authorization: Bearer <key>` header for substantially higher limits; the call still costs 0 credits either way. Respect `Retry-After` on a `429`.
          *
@@ -121,8 +121,10 @@ export interface paths {
         };
         /**
          * List a company's register documents (live)
-         * @description Check the German registries live and list register documents,
-         *     including older document versions. This typically takes several seconds.
+         * @description List register documents, including older document versions, from a live
+         *     registry check, reusing a successful check from the last 24 hours.
+         *     `freshness.last_checked_at` says when the check ran. A live check typically
+         *     takes several seconds when needed.
          *
          *     Pass a document's `document_id` and its `type` as `file_type` to
          *     `GET /v1/companies/{eu_id}/documents/download` to download that version.
@@ -134,7 +136,7 @@ export interface paths {
          *     the response serves the stored catalog with the outcome in `freshness`.
          *     Unreachable-registry, unavailable-company and empty answers are not billed.
          *     Swiss and Austrian companies return an empty list with `coverage.status=not_applicable`.
-         *     This endpoint always checks live and accepts no `fetch_realtime` parameter.
+         *     This endpoint accepts no `fetch_realtime` parameter.
          *
          *
          *     ## Pricing
@@ -230,7 +232,7 @@ export interface paths {
          *     - **Aggregated summary** — latest-year revenue, profit, total assets, total liabilities and equity, and equity
          *     - **Multi-year history** — per fiscal year: top-line metrics plus the top-level balance-sheet and P&L positions (see *Two levels of detail* below)
          *     - **Employee time series** — total, full-time, and part-time headcount per year
-         *     - **Group relationships** — parent company and known subsidiaries sourced from consolidated filings
+         *     - **Group relationships** — parent company and known subsidiaries sourced from consolidated filings, and — for a company that no longer publishes its own accounts — a link to the parent whose group accounts carry its current figures (`group_accounts`)
          *     - **Filed Bilanzen** — list of Jahresabschluss and Konzernabschluss filings with type and publication date (PDF downloads are not exposed in v1)
          *
          *     ### Two levels of detail
@@ -252,7 +254,40 @@ export interface paths {
          *     Positions are taken as filed, never computed: a position the filing does not show is `null`. Small companies file a shortened balance sheet and usually no P&L, so their `income_statement` is `null`.
          *
          *     `years=N` limits every per-year array — metrics, line items, employee
-         *     series and filings — to the N most recent fiscal years on record.
+         *     series and filings — to the N most recent fiscal years on record;
+         *     `year=2025` to that one fiscal year.
+         *
+         *     ### Single-entity or group statement
+         *
+         *     `history.by_scope.entity` (Jahresabschluss) and `history.by_scope.group`
+         *     (Konzernabschluss) each carry one statement in full: yearly metrics and,
+         *     unless `details=false`, every line item. `scope` selects them — `entity`,
+         *     `group`, or both (the default, also `scope=entity&scope=group`) — and
+         *     `year` / `years` apply to them like everywhere else. A statement the company
+         *     does not file comes back with empty arrays.
+         *
+         *     `history.metrics`, the line-item arrays next to it and `summary` are the
+         *     company's headline: its own group statement for every year when it
+         *     publishes one, else its single-entity statement — never a mix of both.
+         *
+         *     ### Companies covered by a parent's group accounts
+         *
+         *     German subsidiaries may stop publishing their own annual accounts once a
+         *     parent's consolidated accounts (Konzernabschluss) include them (§ 264(3) /
+         *     § 264b HGB), and many never publish any; large family-owned GmbH & Co. KGs
+         *     often report this way. Their own history then ends years ago — Sennheiser
+         *     electronic SE & Co. KG has own accounts up to 2012 — or is empty, so
+         *     `summary` holds old figures or is `null`.
+         *
+         *     `group_accounts` says so and where to look: the parent whose consolidated
+         *     accounts include the company (`parent`, here Sennheiser Holding SE & Co. KG),
+         *     the newest year they do (`group_accounts_latest_year`), the company's own
+         *     newest year (`own_accounts_latest_year`), and `financials_url` — the parent's
+         *     financials in this API, which carry the group's figures (`web_url` is its
+         *     page on firmendata.com). It is
+         *     `null` when the company's own accounts are current (one year behind the
+         *     group is normal publication lag) or no such parent is known. For screening
+         *     and benchmarking, follow `financials_url` whenever `group_accounts` is set.
          *
          *     A company with no financial data on record at all (no figures, no
          *     headcount, no filings, no group relationships) is answered with the empty
@@ -341,6 +376,10 @@ export interface paths {
          *       falls back to the most recent available cap table when a refresh fails.
          *
          *     Historical snapshots and cross-filing diffs are reserved for a later release.
+         *
+         *     **United Kingdom (GB):** always `not_applicable`. No UK register publishes a
+         *     structured shareholder list; owners and controllers above 25 % are persons
+         *     with significant control, returned by `GET /v1/companies/{eu_id}/ubo`.
          *
          *     A response without a cap table (`coverage.status` other than `available`)
          *     costs no credits.
@@ -436,6 +475,33 @@ export interface paths {
          *       30 %, Y holds 40 % of root → A's `effective_share_percent = 70`
          *       (each branch is independently a control link, and the root-edge
          *       shares add up).
+         *
+         *     **United Kingdom (GB):** the chain is read from the Companies House
+         *     registers of persons with significant control (PSC), not from cap tables.
+         *
+         *     - Every PSC link is, by its legal definition, significant control: more
+         *       than 25 % of the shares or voting rights, the right to appoint or remove
+         *       the majority of the board, or significant influence or control. Every
+         *       natural person reached through such links is listed as a beneficial owner;
+         *       a corporate PSC registered in the UK is followed into its own register when
+         *       its company number matches a UK company we hold (exactly, never by name).
+         *     - Companies House reports **bands, not percentages**: `share_percent` is
+         *       the lower bound of the share band ("more than 25 %" → 25, "50–75 %" → 50,
+         *       "75–100 %" → 75) and `null` when the person or entity holds no share band
+         *       (control through voting rights, board appointments or influence only).
+         *       `effective_share_percent` sums those lower bounds over the branches into
+         *       the root and is `0` when none carries a share band — so for GB it can be
+         *       25 or below, and the person is still a beneficial owner.
+         *     - Persons carry the year of birth only (`YYYY-01-01`); Companies House
+         *       publishes month and year. No address is published.
+         *     - `partial` names what the chain could not show: organisations we cannot
+         *       follow (foreign, or a UK registration we do not hold), protected entries
+         *       whose details Companies House withholds, and "a registrable person exists
+         *       but is not identified" statements. A company exempt from keeping a PSC
+         *       register (shares on a regulated market) is `not_applicable`; one that
+         *       states nobody has significant control is `available` with no owners.
+         *     - `fetch_realtime` does not apply; `freshness.last_checked_at` is when the
+         *       newest daily Companies House PSC snapshot was applied.
          *
          *     Designed for KYC workflows where the freshest possible chain matters.
          *
@@ -1173,10 +1239,10 @@ export interface components {
         AutocompleteHit: {
             /**
              * Country Code
-             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch.
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT";
+            country_code: "DE" | "CH" | "AT" | "GB";
             /**
              * Display Name
              * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
@@ -1218,7 +1284,7 @@ export interface components {
             register_number?: number | null;
             /**
              * Register Type
-             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`, `AT-FB`).
+             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`, `AT-FB`, `GB-CR`).
              */
             register_type?: string | null;
             /**
@@ -1352,7 +1418,7 @@ export interface components {
         BeneficialOwner: {
             /**
              * Effective Share Percent
-             * @description Capital share of the root attributable to this person. For direct holdings, the sum of their direct positions. For indirect holdings, the share at the final hop into the root (the company directly held by the root that this person ultimately controls); when reached via several distinct branches, the sum of those branches' root-edge shares. **Not** a multiplicative product — German UBO law treats every controlling link as 100 % pass-through. Always strictly greater than 25.
+             * @description Capital share of the root attributable to this person. For direct holdings, the sum of their direct positions. For indirect holdings, the share at the final hop into the root (the company directly held by the root that this person ultimately controls); when reached via several distinct branches, the sum of those branches' root-edge shares. **Not** a multiplicative product — German UBO law treats every controlling link as 100 % pass-through. Always strictly greater than 25, except for UK (GB) companies: there every person with significant control is a beneficial owner, and the value sums the lower bounds of the share bands filed (25, 50 or 75), 0 when control is through voting rights, board appointments or influence only.
              */
             effective_share_percent: number;
             /**
@@ -1675,6 +1741,57 @@ export interface components {
              */
             object: "capital_entry";
         };
+        /** ClassificationCode */
+        ClassificationCode: {
+            /**
+             * Code
+             * @description Code in the stated classification version.
+             */
+            code: string;
+            /**
+             * Object
+             * @description Discriminator. Always `classification_code`.
+             * @default classification_code
+             * @constant
+             */
+            object: "classification_code";
+            /**
+             * Title De
+             * @description Official German title, when available.
+             */
+            title_de?: string | null;
+            /**
+             * Title En
+             * @description Official English title, when available.
+             */
+            title_en?: string | null;
+        };
+        /** ClassificationRepresentation */
+        ClassificationRepresentation: {
+            /**
+             * Codes
+             * @description Corresponding codes using the official Destatis (WZ 2008 ↔ WZ 2025) and Eurostat (NACE Rev. 2 ↔ Rev. 2.1) correspondence tables and Eurostat's NACE Rev. 2 ↔ ISIC Rev. 4 table.
+             */
+            codes?: components["schemas"]["ClassificationCode"][];
+            /**
+             * Object
+             * @description Discriminator. Always `classification_representation`.
+             * @default classification_representation
+             * @constant
+             */
+            object: "classification_representation";
+            /**
+             * Partial
+             * @description The code corresponds to several codes in this version, so the list is a set of candidates.
+             */
+            partial: boolean;
+            /**
+             * Scheme
+             * @description Classification version: NACE Rev. 2.1 is the revised EU classification; WZ 2008 is Germany's previous classification; NACE Rev. 2 is the previous EU classification; ISIC Rev. 4 is the United Nations' International Standard Industrial Classification.
+             * @enum {string}
+             */
+            scheme: "nace_rev_2_1" | "wz_2008" | "nace_rev_2" | "isic_rev_4";
+        };
         /**
          * CompanyDetail
          * @description Hero detail profile returned by `GET /v1/companies/{eu_id}`.
@@ -1700,10 +1817,10 @@ export interface components {
             contact: components["schemas"]["ContactBlock"];
             /**
              * Country Code
-             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch.
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT";
+            country_code: "DE" | "CH" | "AT" | "GB";
             /**
              * Display Name
              * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
@@ -1725,6 +1842,8 @@ export interface components {
              * @description firmendata company identifier.
              */
             eu_id: string;
+            /** @description The company's own most recent declaration under the EU SME definition (Commission Recommendation 2003/361/EC). Null means no declaration known. */
+            eu_sme_declaration?: components["schemas"]["EuSmeDeclaration"] | null;
             /** @description Headline figures for the latest reported fiscal year. `null` when no financial filings are available. For the full multi-year history, call `GET /v1/companies/{eu_id}/financials`. */
             financial_summary?: components["schemas"]["FinancialSummaryBlock"] | null;
             /**
@@ -1794,6 +1913,8 @@ export interface components {
              * @constant
              */
             object: "company";
+            /** @description The register entry this company's entry continues, when the register records one (seat move to another court district or transfer to another court). `null` when none is recorded. */
+            previous_registration?: components["schemas"]["PreviousRegistration"] | null;
             /**
              * Register Canton
              * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German and Austrian companies.
@@ -1813,7 +1934,7 @@ export interface components {
             register_number?: number | null;
             /**
              * Register Type
-             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`, `AT-FB`).
+             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`, `AT-FB`, `GB-CR`).
              */
             register_type?: string | null;
             /**
@@ -1989,10 +2110,10 @@ export interface components {
         CompanyDocumentList: {
             /**
              * Country Code
-             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch.
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT";
+            country_code: "DE" | "CH" | "AT" | "GB";
             /** @description Whether register document downloads apply to this company. */
             coverage: components["schemas"]["DocumentsCoverage"];
             /**
@@ -2110,6 +2231,8 @@ export interface components {
             financial_publications?: components["schemas"]["FinancialPublication"][];
             /** @description How current the financial filings in this response are. `last_checked_at` is the timestamp at which the company's filings were last successfully refreshed; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. */
             freshness: components["schemas"]["Freshness"];
+            /** @description Set when this company stopped publishing its own accounts (or never did) while a parent's consolidated accounts still include it: the history here ends at `own_accounts_latest_year`, and the newer figures are the group's, under the parent. Follow `financials_url`. `null` when the company's own accounts are current or no such parent is known. */
+            group_accounts?: components["schemas"]["GroupAccountsReference"] | null;
             /** @description Multi-year history: annual top-line metrics with the top-level positions, plus the structured profit-and-loss, assets, and liabilities-and-equity rows from the filings (left empty with `details=false`). */
             history: components["schemas"]["FinancialHistoryBlock"];
             /**
@@ -2396,9 +2519,14 @@ export interface components {
          * Country
          * @enum {string}
          */
-        Country: "DE" | "CH" | "AT";
+        Country: "DE" | "CH" | "AT" | "GB";
         /** DocumentsCoverage */
         DocumentsCoverage: {
+            /**
+             * External Url
+             * @description The register's own public page listing the company's filed documents, when document downloads do not apply here and the register offers one; `null` otherwise.
+             */
+            external_url?: string | null;
             /**
              * Object
              * @description Discriminator. Always `documents_coverage`.
@@ -2469,6 +2597,27 @@ export interface components {
              */
             year: number;
         };
+        /** EuSmeDeclaration */
+        EuSmeDeclaration: {
+            /**
+             * Declared On
+             * Format: date
+             * @description Date of that declaration.
+             */
+            declared_on: string;
+            /**
+             * Is Sme
+             * @description The company's own most recent declaration under the EU SME definition (Commission Recommendation 2003/361/EC).
+             */
+            is_sme: boolean;
+            /**
+             * Object
+             * @description Discriminator. Always `eu_sme_declaration`.
+             * @default eu_sme_declaration
+             * @constant
+             */
+            object: "eu_sme_declaration";
+        };
         /** FeedCompany */
         FeedCompany: {
             /** City */
@@ -2477,7 +2626,7 @@ export interface components {
              * Country
              * @enum {string}
              */
-            country: "DE" | "CH" | "AT";
+            country: "DE" | "CH" | "AT" | "GB";
             /** Eu Id */
             eu_id?: string | null;
             /** Legal Form */
@@ -2572,6 +2721,8 @@ export interface components {
              * @description Every filed assets-side (Aktiva) row at every depth, with its HGB hierarchy. Empty with `details=false`; the top-level positions are always in `metrics[].balance_sheet`.
              */
             assets?: components["schemas"]["FinancialRow"][];
+            /** @description Single-entity (`entity`, Jahresabschluss) and group (`group`, Konzernabschluss) statements side by side, each with its own metrics and, unless `details=false`, every line item. `scope` selects which are included (default both). `metrics` and the line-item arrays above are the headline: one statement for every year, the group statement when the company publishes one. `null` when no split is on record. */
+            by_scope?: components["schemas"]["FinancialScopesBlock"] | null;
             /**
              * Liabilities And Equity
              * @description Every filed liabilities-and-equity (Passiva) row at every depth, with its HGB hierarchy. Empty with `details=false`; the top-level positions are always in `metrics[].balance_sheet`.
@@ -2646,6 +2797,7 @@ export interface components {
              *     - `no_guv` — no profit-and-loss statement published (§ 326 Abs. 1)
              *     - `rohergebnis` — P&L collapsed to a Rohergebnis (§ 276)
              *     - `declared` — the filing states its own class
+             *     - `filed_221_ugb` — an Austrian filing states its § 221 UGB class
              *     - `ceiling_balance_sheet` / `ceiling_employees` — a second § 267 criterion is over its limit, which tightened the class
              * @example no_guv
              */
@@ -2658,6 +2810,11 @@ export interface components {
              * @example klein
              */
             size_class?: string | null;
+            /**
+             * Statement Scope
+             * @description Which statement the figures come from: `entity` = the company's own (single-entity) Jahresabschluss, `group` = its own consolidated Konzernabschluss. `null` when unknown. In `history.metrics` (the headline) a year carries the company's own group statement when it published one, else its own statement; `history.by_scope` has both.
+             */
+            statement_scope?: ("entity" | "group") | null;
             /**
              * Year
              * @description Fiscal year.
@@ -2730,7 +2887,7 @@ export interface components {
             previous_value?: number | null;
             /**
              * Report Type
-             * @description Report type (e.g. `Jahresabschluss`, `Konzernabschluss`).
+             * @description Statement part: `AKTIVA` (assets), `PASSIVA` (liabilities and equity) or `GUV` (profit and loss). Whether the row comes from the single-entity or the group statement is `statement_scope`.
              */
             report_type: string;
             /**
@@ -2738,6 +2895,11 @@ export interface components {
              * @description Top-level section heading.
              */
             section?: string | null;
+            /**
+             * Statement Scope
+             * @description Which statement the figures come from: `entity` = the company's own (single-entity) Jahresabschluss, `group` = its own consolidated Konzernabschluss. `null` when unknown.
+             */
+            statement_scope?: ("entity" | "group") | null;
             /**
              * Subsection
              * @description Second-level heading.
@@ -2763,6 +2925,68 @@ export interface components {
              * @description Fiscal year of the statement this row belongs to.
              */
             year: number;
+        };
+        /**
+         * FinancialScopesBlock
+         * @description Single-entity and group statements side by side, as selected by `scope`.
+         */
+        FinancialScopesBlock: {
+            /** @description The company's own single-entity statements (Jahresabschluss). `null` when not requested via `scope`; empty arrays when the company files none (e.g. a holding that publishes only group accounts). */
+            entity?: components["schemas"]["FinancialStatementHistory"] | null;
+            /** @description The company's own consolidated statements (Konzernabschluss). `null` when not requested via `scope`; empty arrays for companies without group accounts. Never a parent's group accounts published for this company (§ 291/292 HGB). */
+            group?: components["schemas"]["FinancialStatementHistory"] | null;
+            /**
+             * Object
+             * @description Discriminator. Always `financial_scopes`.
+             * @default financial_scopes
+             * @constant
+             */
+            object: "financial_scopes";
+        };
+        /**
+         * FinancialStatementHistory
+         * @description One statement type's full history: yearly metrics and, unless
+         *     `details=false`, every filed line item.
+         */
+        FinancialStatementHistory: {
+            /**
+             * Assets
+             * @description Every filed assets-side (Aktiva) row of this statement. Empty with `details=false`.
+             */
+            assets?: components["schemas"]["FinancialRow"][];
+            /**
+             * Employees
+             * @description Employee counts read from this statement type: the company's own staff under `entity`, the whole group's under `group`. Empty when none was read from a statement of this type. The top-level `employee_history` carries the counts matching the headline figures' `statement_scope`.
+             */
+            employees?: components["schemas"]["EmployeeYear"][];
+            /**
+             * Liabilities And Equity
+             * @description Every filed liabilities-and-equity (Passiva) row of this statement. Empty with `details=false`.
+             */
+            liabilities_and_equity?: components["schemas"]["FinancialRow"][];
+            /**
+             * Metrics
+             * @description Annual metrics from this statement, one entry per fiscal year, with top-level positions. Empty when the company files no statement of this type.
+             */
+            metrics?: components["schemas"]["FinancialMetric"][];
+            /**
+             * Object
+             * @description Discriminator. Always `financial_statement_history`.
+             * @default financial_statement_history
+             * @constant
+             */
+            object: "financial_statement_history";
+            /**
+             * Profit And Loss
+             * @description Every filed profit-and-loss row of this statement. Empty with `details=false`.
+             */
+            profit_and_loss?: components["schemas"]["FinancialRow"][];
+            /**
+             * Scope
+             * @description `entity`: the company's own single-entity statements (Jahresabschluss); `group`: its own consolidated statements (Konzernabschluss).
+             * @enum {string}
+             */
+            scope: "entity" | "group";
         };
         /**
          * FinancialSummaryBlock
@@ -2811,6 +3035,11 @@ export interface components {
              * @constant
              */
             object: "financial_summary";
+            /**
+             * Statement Scope
+             * @description Which statement the latest fiscal year's headline figures come from: `group` when the company published its own consolidated Konzernabschluss for that year, else `entity` (its own Jahresabschluss).
+             */
+            statement_scope?: ("entity" | "group") | null;
         };
         /**
          * FirstRegisterEntry
@@ -3029,6 +3258,51 @@ export interface components {
              * @enum {string}
              */
             realtime_fetching_status: "success" | "platform_unavailable" | "documents_temporarily_unavailable" | "file_unavailable" | "company_unavailable" | "realtime_fetching_disabled";
+        };
+        /**
+         * GroupAccountsReference
+         * @description Where to find the current figures of a company that no longer publishes its own accounts.
+         *
+         *     German subsidiaries may stop publishing their own annual accounts once a
+         *     parent's consolidated accounts (Konzernabschluss) include them
+         *     (§ 264(3) / § 264b HGB), and many never publish any. Their own history
+         *     then ends years ago — or is empty — while the group's figures stay
+         *     current under the parent.
+         */
+        GroupAccountsReference: {
+            /**
+             * Financials Url
+             * @description The parent's financials in this API: `GET /v1/companies/{parent.eu_id}/financials`.
+             * @example https://api.firmendata.com/v1/companies/DEP2305.HRA120224/financials
+             */
+            financials_url: string;
+            /**
+             * Group Accounts Latest Year
+             * @description Newest fiscal year in which the parent's consolidated accounts include this company.
+             * @example 2024
+             */
+            group_accounts_latest_year: number;
+            /**
+             * Object
+             * @description Discriminator. Always `group_accounts_reference`.
+             * @default group_accounts_reference
+             * @constant
+             */
+            object: "group_accounts_reference";
+            /**
+             * Own Accounts Latest Year
+             * @description Newest fiscal year of this company's own accounts on record, `null` when it has published none.
+             * @example 2012
+             */
+            own_accounts_latest_year?: number | null;
+            /** @description The parent whose consolidated accounts include this company. `reporting_year` is the newest fiscal year they do. */
+            parent: components["schemas"]["RelatedCompany"];
+            /**
+             * Web Url
+             * @description The parent's public company page on firmendata.com.
+             * @example https://firmendata.com/en/company/DEP2305.HRA120224
+             */
+            web_url: string;
         };
         /**
          * HistoryBranch
@@ -3300,7 +3574,7 @@ export interface components {
             case_number?: string | null;
             /**
              * Category
-             * @description Event type, in the shared German vocabulary: `Sicherungsmaßnahmen`, `Eröffnungen`, `Abweisungen mangels Masse`, `Aufhebung Sicherungsmaßnahmen`, `Aufhebung des Verfahrens`, `Auflösung durch Gesellschafterbeschluss`, `Auflösung mit Fortführung`, `Auflösung`. Swiss Official Gazette of Commerce (SHAB) notices for Swiss companies: `Konkurseröffnung`, `Einstellung mangels Aktiven`, `Schluss des Konkursverfahrens`, `Widerruf des Konkurses`, `Provisorische Nachlassstundung`, `Definitive Nachlassstundung`, `Aufhebung der Nachlassstundung`, `Bestätigung des Nachlassvertrages`, `Nachlassvertrag mit Vermögensabtretung`.
+             * @description Event type, in the shared German vocabulary: `Sicherungsmaßnahmen`, `Eröffnungen`, `Abweisungen mangels Masse`, `Aufhebung Sicherungsmaßnahmen`, `Aufhebung des Verfahrens`, `Auflösung durch Gesellschafterbeschluss`, `Auflösung mit Fortführung`, `Auflösung`. Swiss Official Gazette of Commerce (SHAB) notices for Swiss companies: `Konkurseröffnung`, `Einstellung mangels Aktiven`, `Schluss des Konkursverfahrens`, `Widerruf des Konkurses`, `Provisorische Nachlassstundung`, `Definitive Nachlassstundung`, `Aufhebung der Nachlassstundung`, `Bestätigung des Nachlassvertrages`, `Nachlassvertrag mit Vermögensabtretung`. Companies House insolvency cases and statuses (`companies_house`), in English: `Winding-up order`, `Creditors' voluntary liquidation`, `Members' voluntary liquidation` (solvent), `Overseas winding up`, `Winding up concluded`, `Administration`, `Administration ended`, `Company voluntary arrangement`, `Company voluntary arrangement ended`, `Receivership`, `Receivership ended`, `Moratorium`, `Moratorium ended`, `Restructuring plan`, `Proposal to strike off`.
              * @example Auflösung durch Gesellschafterbeschluss
              */
             category: string;
@@ -3364,9 +3638,9 @@ export interface components {
             self_administration: boolean;
             /**
              * Sources
-             * @description Register or official publication venue recording this event: the commercial register, Insolvenzbekanntmachungen, the Swiss Official Gazette of Commerce (SHAB), or the Austrian Firmenbuch.
+             * @description Register or official publication venue recording this event: the commercial register, Insolvenzbekanntmachungen, the Swiss Official Gazette of Commerce (SHAB), the Austrian Firmenbuch, or Companies House.
              */
-            sources?: ("si" | "cd" | "portal" | "shab" | "firmenbuch")[];
+            sources?: ("si" | "cd" | "portal" | "shab" | "firmenbuch" | "companies_house")[];
         };
         /**
          * LeiGraphBlock
@@ -3747,7 +4021,7 @@ export interface components {
             previous_cursor?: string | null;
             /**
              * Total Approx
-             * @description Approximate total result count. Capped at 10,000 for `/companies/search`; exact for the lists endpoints; `null` for the subscription listings, which do not count.
+             * @description Approximate total result count. Capped at 10,000 for `/companies/search`; exact for the lists endpoints; `null` for the subscription listings, which do not count, and `null` when the count could not be computed in time.
              */
             total_approx?: number | null;
             /**
@@ -3875,10 +4149,63 @@ export interface components {
             unresolved_reason: "foreign_org" | "unlisted_org" | "cap_table_not_filed" | "max_depth_reached";
         };
         /**
+         * PreviousRegistration
+         * @description The previous register entry continued by this company's entry.
+         */
+        PreviousRegistration: {
+            /**
+             * Eu Id
+             * @description firmendata identifier of the previous register entry, when it can be fetched from this API; `null` otherwise.
+             */
+            eu_id?: string | null;
+            /**
+             * Kind
+             * @description `seat_move`: the company moved its registered seat into another court's district and got a new register entry; `court_change`: the register entry was transferred to another court without a stated seat move.
+             * @enum {string}
+             */
+            kind: "seat_move" | "court_change";
+            /**
+             * Original First Register Entry At
+             * @description First register entry of the earliest predecessor we could trace (up to five earlier entries). `first_register_entry_at` stays the date of the current entry.
+             */
+            original_first_register_entry_at?: string | null;
+            /**
+             * Register Court
+             * @description Court that kept the previous register entry.
+             */
+            register_court?: string | null;
+            /**
+             * Register Number
+             * @description Number of the previous entry (digits only).
+             */
+            register_number?: number | null;
+            /**
+             * Register Type
+             * @description Register type of the previous entry (e.g. `HRB`).
+             */
+            register_type?: string | null;
+            /**
+             * Registered Seat
+             * @description Registered seat before the move, when the register states it.
+             */
+            registered_seat?: string | null;
+            /**
+             * Resolution Date
+             * @description Date of the resolution that decided the move, when the register states it.
+             */
+            resolution_date?: string | null;
+        };
+        /**
          * Problem
          * @description RFC 7807 problem details object.
          */
         Problem: {
+            /** @description Candidate companies when an incomplete German id is ambiguous (409). */
+            candidates?: {
+                eu_id: string;
+                is_deleted: boolean;
+                name: string;
+            }[];
             /** @description Human-readable explanation specific to this occurrence. */
             detail?: string | null;
             /** @description Parameter-level validation failures (only on 422 responses). */
@@ -3945,7 +4272,7 @@ export interface components {
          * Rechtsform
          * @enum {string}
          */
-        Rechtsform: "GmbH" | "KG" | "e.K." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "e.V." | "AG" | "eG" | "ausländische Rechtsform (HRB)" | "gGmbH" | "UG & Co. KG" | "ausländische Rechtsform" | "SE" | "sonstige juristische Person" | "EWIV" | "KGaA" | "Ltd. & Co. KG" | "sonstige juristische Person (HRA)" | "GmbH & Co. OHG" | "VVaG" | "SE & Co. KG" | "ausländische Rechtsform (HRA)" | "AG & Co. KG" | "ausländische Rechtsform (PR)" | "SCE" | "ausländische Rechtsform (GnR)" | "Stiftung & Co. KG" | "eG & Co. KG" | "Einzelunternehmen (CH)" | "Kollektivgesellschaft (CH)" | "Kommanditgesellschaft (CH)" | "Kommanditaktiengesellschaft (CH)" | "AG (CH)" | "GmbH (CH)" | "Genossenschaft (CH)" | "Verein (CH)" | "Stiftung (CH)" | "Zweigniederlassung ausl. Ges. (CH)" | "Besondere Rechtsform (CH)" | "KmGK (CH)" | "SICAV (CH)" | "SICAF (CH)" | "Institut des öffentlichen Rechts (CH)" | "Nichtkaufmännische Prokura (CH)" | "Gemeinderschaft (CH)" | "Zweigniederlassung (CH)" | "GmbH (AT)" | "AG (AT)" | "FlexCo (AT)" | "KG (AT)" | "OG (AT)" | "e.U. (AT)" | "Genossenschaft (AT)" | "Privatstiftung (AT)" | "Sparkasse (AT)" | "VVaG (AT)" | "SE (AT)" | "EWIV (AT)" | "Sonstiger Rechtsträger (AT)" | "OHG (AT, alt)" | "KEG (AT, alt)" | "OEG (AT, alt)" | "Einzelkaufmann (AT, alt)";
+        Rechtsform: "GmbH" | "KG" | "e.K." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "e.V." | "AG" | "eG" | "ausländische Rechtsform (HRB)" | "gGmbH" | "UG & Co. KG" | "ausländische Rechtsform" | "SE" | "sonstige juristische Person" | "EWIV" | "KGaA" | "Ltd. & Co. KG" | "sonstige juristische Person (HRA)" | "GmbH & Co. OHG" | "VVaG" | "SE & Co. KG" | "ausländische Rechtsform (HRA)" | "AG & Co. KG" | "ausländische Rechtsform (PR)" | "SCE" | "ausländische Rechtsform (GnR)" | "Stiftung & Co. KG" | "eG & Co. KG" | "Einzelunternehmen (CH)" | "Kollektivgesellschaft (CH)" | "Kommanditgesellschaft (CH)" | "Kommanditaktiengesellschaft (CH)" | "AG (CH)" | "GmbH (CH)" | "Genossenschaft (CH)" | "Verein (CH)" | "Stiftung (CH)" | "Zweigniederlassung ausl. Ges. (CH)" | "Besondere Rechtsform (CH)" | "KmGK (CH)" | "SICAV (CH)" | "SICAF (CH)" | "Institut des öffentlichen Rechts (CH)" | "Nichtkaufmännische Prokura (CH)" | "Gemeinderschaft (CH)" | "Zweigniederlassung (CH)" | "GmbH (AT)" | "AG (AT)" | "FlexCo (AT)" | "KG (AT)" | "OG (AT)" | "e.U. (AT)" | "Genossenschaft (AT)" | "Privatstiftung (AT)" | "Sparkasse (AT)" | "VVaG (AT)" | "SE (AT)" | "EWIV (AT)" | "Sonstiger Rechtsträger (AT)" | "OHG (AT, alt)" | "KEG (AT, alt)" | "OEG (AT, alt)" | "Einzelkaufmann (AT, alt)" | "Zweigniederlassung ausl. Ges. (AT)" | "Ltd (UK)" | "PLC (UK)" | "LLP (UK)" | "LP (UK)" | "Scottish partnership (UK)" | "CIC (UK)" | "Ltd by guarantee (UK)" | "Ltd by guarantee, name exempt (UK)" | "Ltd, name exempt (UK)" | "Unlimited company (UK)" | "Unlimited, no share capital (UK)" | "Old public company (UK)" | "CIO (UK)" | "SCIO (UK)" | "Registered society (UK)" | "Industrial and provident society (UK)" | "Royal charter company (UK)" | "ICVC (UK)" | "ICVC, securities (UK)" | "ICVC, warrant (UK)" | "ICVC, umbrella (UK)" | "United Kingdom Societas (UK)" | "SE (UK)" | "EEIG (UK)" | "EEIG establishment (UK)" | "UKEIG (UK)" | "Overseas entity (UK)" | "Overseas company (UK)" | "UK establishment (UK)" | "Northern Ireland company (UK)" | "Credit union, Northern Ireland (UK)" | "Protected cell company (UK)" | "Assurance company (UK)" | "Unregistered company (UK)" | "FE or sixth form college (UK)" | "Converted or closed (UK)" | "Other company type (UK)";
         /**
          * RegisterCourt
          * @enum {string}
@@ -3955,7 +4282,7 @@ export interface components {
          * RegisterType
          * @enum {string}
          */
-        RegisterType: "HRA" | "HRB" | "GnR" | "PR" | "VR" | "GsR" | "CH-HR" | "AT-FB";
+        RegisterType: "HRA" | "HRB" | "GnR" | "PR" | "VR" | "GsR" | "CH-HR" | "AT-FB" | "GB-CR";
         /**
          * RelatedCompany
          * @description Reference to a related company (parent or subsidiary).
@@ -4050,10 +4377,10 @@ export interface components {
             address?: components["schemas"]["Address"] | null;
             /**
              * Country Code
-             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch.
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT";
+            country_code: "DE" | "CH" | "AT" | "GB";
             /**
              * Cpv Award Codes
              * @description CPV (Common Procurement Vocabulary) codes from public-procurement awards.
@@ -4143,7 +4470,7 @@ export interface components {
             register_number?: number | null;
             /**
              * Register Type
-             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`, `AT-FB`).
+             * @description Register type code (e.g. `HRB`, `HRA`, `GnR`, `PR`, `VR`, `CH-HR`, `AT-FB`, `GB-CR`).
              */
             register_type?: string | null;
             /**
@@ -4300,8 +4627,13 @@ export interface components {
              */
             object: "shareholders_coverage";
             /**
+             * Reason
+             * @description Explanation of a `not_applicable` answer, when there is one; `null` otherwise.
+             */
+            reason?: string | null;
+            /**
              * Status
-             * @description Coverage status. `available`: cap table available and returned; `not_applicable`: legal form does not file a Gesellschafterliste, or the company is Austrian (no shareholder data yet); `not_filed`: filing expected but not yet received; `token_limit_reached`: filing too large to process.
+             * @description Coverage status. `available`: cap table available and returned; `not_applicable`: legal form does not file a Gesellschafterliste, or the company is Austrian (no shareholder data yet), or British (no UK register publishes a shareholder list; persons with significant control are on the UBO endpoint); `not_filed`: filing expected but not yet received; `token_limit_reached`: filing too large to process.
              * @default not_filed
              * @enum {string}
              */
@@ -4481,7 +4813,7 @@ export interface components {
             cadence: components["schemas"]["NotificationCadence"];
             /**
              * Eu Id
-             * @description firmendata company identifier to subscribe against.
+             * @description firmendata company identifier to subscribe against. A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids.
              * @example DEF1103R.HRB279792B
              */
             eu_id: string;
@@ -5095,7 +5427,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description Coverage status. `available`: chain fully resolved to natural persons, OR remaining unresolved branches sum to ≤25 % effective share and cannot hide a beneficial owner; `partial`: at least one unresolved branch could hide a beneficial owner — either a single unresolved org carries >25 % effective share at the root, or several sum to >25 %; `not_applicable`: legal form does not file a Gesellschafterliste, or the company is Austrian (no shareholder data yet); `not_filed`: filing expected but not yet received.
+             * @description Coverage status. `available`: chain fully resolved to natural persons, OR remaining unresolved branches sum to ≤25 % effective share and cannot hide a beneficial owner; `partial`: at least one unresolved branch could hide a beneficial owner — either a single unresolved org carries >25 % effective share at the root, or several sum to >25 %; `not_applicable`: legal form does not file a Gesellschafterliste, the company is Austrian (no shareholder data yet), or a UK company is exempt from keeping a register of persons with significant control; `not_filed`: filing expected but not yet received (for a UK company: no current person with significant control on file).
              * @default not_filed
              * @enum {string}
              */
@@ -5115,7 +5447,7 @@ export interface components {
             object: "ubo_edge";
             /**
              * Share Percent
-             * @description Direct share percentage in [0, 100] from source to target, or `null` when the underlying filing didn't report a percentage.
+             * @description Direct share percentage in [0, 100] from source to target, or `null` when the underlying filing didn't report a percentage. For UK (GB) companies, the lower bound of the share band filed (more than 25 % → 25, 50–75 % → 50, 75–100 % → 75).
              */
             share_percent?: number | null;
             /**
@@ -5377,6 +5709,11 @@ export interface components {
              */
             object: "wz_2025_score";
             /**
+             * Other Classifications
+             * @description Other classification versions in NACE Rev. 2.1, WZ 2008, NACE Rev. 2, ISIC Rev. 4 order. Conversions start from the originally recorded code when available, otherwise the canonical WZ 2025 code.
+             */
+            other_classifications?: components["schemas"]["ClassificationRepresentation"][];
+            /**
              * Score
              * @description Confidence score for this code, from 0 (none) to 1 (certain), rounded to three decimals. Meaningful for ranking a company's candidate codes against each other; not calibrated as a probability.
              * @example 0.157
@@ -5387,6 +5724,21 @@ export interface components {
              * @description WZ 2025 section letter (e.g. `J` for Information and communication).
              */
             section?: string | null;
+            /**
+             * Source Classification
+             * @description Classification version the code was originally recorded in, when different from canonical WZ 2025: WZ 2008, NACE Rev. 2, NACE Rev. 2.1 or ÖNACE 2025, Austria's official national version of NACE Rev. 2.1, for Austrian companies.
+             */
+            source_classification?: ("wz_2008" | "nace_rev_2" | "nace_rev_2_1" | "oenace_2025" | "uk_sic_2007") | null;
+            /**
+             * Source Code
+             * @description The code as originally recorded in that version.
+             */
+            source_code?: string | null;
+            /**
+             * Source Title
+             * @description Official English title of the originally recorded code, falling back to German when unavailable.
+             */
+            source_title?: string | null;
         };
     };
     responses: never;
@@ -5405,7 +5757,7 @@ export interface operations {
                 /** @description Maximum number of suggestions to return. Hard upper bound is 25. */
                 limit?: number;
                 /** @description Restrict all suggestions to the company register: DE, CH or AT. Case-insensitive; omitted searches all countries. */
-                country?: ("DE" | "CH" | "AT") | null;
+                country?: ("DE" | "CH" | "AT" | "GB") | null;
                 /** @description When `true`, search the German company registers live for the keyword and include any companies not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Adds upstream latency (typically a few seconds) and a higher credit cost. Refresh failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
                 fetch_realtime?: boolean;
             };
@@ -5636,7 +5988,7 @@ export interface operations {
                 membership?: components["schemas"]["Membership"][] | null;
                 /** @description Exact LEI (ISO 17442), matched against the company's active LEI record. Case-insensitive. */
                 lei_code?: string | null;
-                /** @description Exact VAT number from the company's Impressum or EU public-procurement (TED) notices. German USt-IdNr and Austrian UIDs (ATU…) are accepted. Case-insensitive. */
+                /** @description Exact VAT identification number. German USt-IdNr and Austrian UIDs (ATU…) are accepted. Case-insensitive. */
                 ust_idnr?: string | null;
                 /** @description Restrict to companies with (`true`) or without (`false`) a known website. */
                 has_website?: boolean | null;
@@ -5798,7 +6150,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description firmendata company identifier (also referred to as `eu_id`). */
+                /** @description firmendata company identifier (also referred to as `eu_id`). A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id: string;
             };
             cookie?: never;
@@ -5862,6 +6214,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/not-found"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -5946,7 +6307,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description firmendata company identifier. */
+                /** @description firmendata company identifier. A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id: string;
             };
             cookie?: never;
@@ -6010,6 +6371,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/not-found"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6103,7 +6473,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description firmendata company identifier (also referred to as `eu_id`). */
+                /** @description firmendata company identifier (also referred to as `eu_id`). A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id: string;
             };
             cookie?: never;
@@ -6167,6 +6537,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/not-found"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6258,10 +6637,14 @@ export interface operations {
                 include?: "line_items"[] | null;
                 /** @description Only the N most recent fiscal years in each per-year array (metrics, line items, employee series, filings). Omit for the full history. */
                 years?: number | null;
+                /** @description Only this fiscal year in each per-year array (metrics, line items, `by_scope`, employee series, filings). A year with nothing on record gives empty arrays. Cannot be combined with `years`. `summary` stays the latest year on record either way. */
+                year?: number | null;
+                /** @description Which statements `history.by_scope` carries in full: `entity` (single-entity, Jahresabschluss), `group` (consolidated, Konzernabschluss), or both — repeat the parameter (`scope=entity&scope=group`). Default: both. */
+                scope?: ("entity" | "group")[] | null;
             };
             header?: never;
             path: {
-                /** @description firmendata company identifier (also referred to as `eu_id`). */
+                /** @description firmendata company identifier (also referred to as `eu_id`). A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id: string;
             };
             cookie?: never;
@@ -6325,6 +6708,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/not-found"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6412,7 +6804,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description firmendata company identifier (also referred to as `eu_id`). */
+                /** @description firmendata company identifier (also referred to as `eu_id`). A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id: string;
             };
             cookie?: never;
@@ -6476,6 +6868,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/not-found"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6558,12 +6959,12 @@ export interface operations {
     getCompanyShareholders: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, retrieve the current shareholder list from the German register before responding. Adds latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Only affects German (DE) companies; ignored for Swiss (CH), Austrian (AT) and UK (GB) companies, with no realtime surcharge. When `true`, retrieve the current shareholder list from the German register before responding. Adds latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
             path: {
-                /** @description firmendata company identifier (also referred to as `eu_id`). */
+                /** @description firmendata company identifier (also referred to as `eu_id`). A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id: string;
             };
             cookie?: never;
@@ -6627,6 +7028,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/not-found"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -6709,12 +7119,12 @@ export interface operations {
     getCompanyUbo: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refetch the latest Liste der Gesellschafter for every German GmbH/UG visited in the ownership chain before building the graph. Adds noticeable latency. Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Only affects German (DE) companies; ignored for Swiss (CH), Austrian (AT) and UK (GB) companies, with no realtime surcharge. When `true`, refetch the latest Liste der Gesellschafter for every German GmbH/UG visited in the ownership chain before building the graph. Adds noticeable latency. Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
             path: {
-                /** @description firmendata company identifier (also referred to as `eu_id`). */
+                /** @description firmendata company identifier (also referred to as `eu_id`). A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id: string;
             };
             cookie?: never;
@@ -6778,6 +7188,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/not-found"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -7418,7 +7837,7 @@ export interface operations {
     listSubscriptions: {
         parameters: {
             query?: {
-                /** @description Filter to subscriptions for one company. */
+                /** @description Filter to subscriptions for one company. A German id without its register-number suffix or branch-court part (e.g. `DEG1207.HRB14323` for `DEG1207.HRB14323FF`) is accepted when it identifies exactly one company; otherwise the response is `409` with the candidate ids. */
                 eu_id?: string | null;
                 /** @description Filter by subscription type. */
                 subscription_type?: components["schemas"]["SubscriptionType"] | null;
@@ -7465,6 +7884,15 @@ export interface operations {
                      *       "type": "https://api.firmendata.com/problems/unauthenticated"
                      *     }
                      */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
@@ -7617,23 +8045,12 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description The request conflicts with the current resource state (e.g. duplicate subscription). */
+            /** @description The request conflicts with the current resource state (e.g. duplicate subscription or ambiguous company id). */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "detail": "A subscription for this company, type, and notification channel already exists.",
-                     *       "instance": "/v1/subscriptions",
-                     *       "message": "A subscription for this company, type, and notification channel already exists.",
-                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
-                     *       "status": 409,
-                     *       "title": "Conflict.",
-                     *       "type": "https://api.firmendata.com/problems/conflict"
-                     *     }
-                     */
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };

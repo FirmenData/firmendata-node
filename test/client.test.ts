@@ -10,7 +10,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   APIConnectionError,
+  AmbiguousCompanyIdError,
   AuthenticationError,
+  ConflictError,
   FirmenData,
   InsufficientCreditsError,
   NotFoundError,
@@ -19,7 +21,13 @@ import {
   ValidationError,
 } from '../src/index.js';
 import { backoffMs, shouldRetry } from '../src/retry.js';
-import type { CompanyDocumentList, FeedEvent, FeedInsolvenciesQuery } from '../src/index.js';
+import { buildError } from '../src/errors.js';
+import type {
+  CompanyDocumentList,
+  CompanyIdCandidate,
+  FeedEvent,
+  FeedInsolvenciesQuery,
+} from '../src/index.js';
 
 function problem(slug: string, status: number, extra: Record<string, unknown> = {}) {
   return {
@@ -487,6 +495,30 @@ describe('document lists', () => {
 });
 
 describe('error mapping', () => {
+  it('maps an ambiguous company id to a conflict with canonical candidates', () => {
+    const candidates: CompanyIdCandidate[] = [
+      { eu_id: 'DER2707_R2701.HRB3910', name: 'Example GmbH', is_deleted: false },
+      { eu_id: 'DER2707_R2702.HRB3910', name: 'Other GmbH', is_deleted: true },
+    ];
+    const err = buildError(409, problem('ambiguous-company-id', 409, { candidates }), {});
+    expect(err).toBeInstanceOf(AmbiguousCompanyIdError);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err).toMatchObject({ candidates, statusCode: 409, requestId: 'req-abc123' });
+  });
+
+  it('defaults missing ambiguity candidates to an empty array', () => {
+    const err = buildError(409, problem('ambiguous-company-id', 409), {});
+    expect(err).toBeInstanceOf(AmbiguousCompanyIdError);
+    expect(err).toMatchObject({ candidates: [] });
+  });
+
+  it.each(['conflict', 'unknown-conflict'])('keeps %s as a plain conflict', (slug) => {
+    const err = buildError(409, problem(slug, 409), {});
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err).not.toBeInstanceOf(AmbiguousCompanyIdError);
+    expect(err).not.toHaveProperty('candidates');
+  });
+
   const cases = [
     ['unauthenticated', 401, AuthenticationError],
     ['insufficient-credits', 402, InsufficientCreditsError],

@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.4.0
+
+Regenerated from the updated API contract. Additive, non-breaking.
+
+**Client behaviour**
+
+- Company calls accept German ids without their register-number suffix or
+  branch-court part when they identify exactly one company. Response `eu_id`
+  values remain canonical. When several companies match,
+  `AmbiguousCompanyIdError` (a `ConflictError`) exposes `candidates` with
+  each company's canonical `eu_id`, `name` and `is_deleted` flag.
+
+**Financials**
+
+- `getFinancials()` accepts `scope` (`entity`, `group`, or both by default)
+  and `year` for a single fiscal year. Combining `year` with `years` raises
+  `ValidationError` from the server.
+
+**Coverage and fields**
+
+- Entity and group statements are kept apart in `history.by_scope`;
+  financial metrics, rows and summaries identify their `statement_scope`.
+- Company profiles include an EU SME declaration (`eu_sme_declaration`).
+- Company profiles include previous registration details (`previous_registration`).
+- Financials include a group accounts reference (`group_accounts`) when a
+  parent's consolidated accounts carry the company's current figures.
+- Document coverage includes an external document link (`external_url`).
+- WZ 2025 classification sources and other classification representations
+  are included in classification results.
+- Shareholder coverage includes a `reason` explaining its status.
+
 ## 1.3.0
 
 Regenerated from the updated API contract. Additive, except where noted for

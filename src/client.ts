@@ -445,6 +445,10 @@ export class FirmenData {
     }
   }
 
+  /**
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
+   */
   getCompany(euId: string, options: LiveCallOptions = {}): Promise<CompanyDetail> {
     return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}`, {
       query: { fetch_realtime: options.fetchRealtime },
@@ -460,6 +464,10 @@ export class FirmenData {
    * empty, and each year keeps its top-level `balance_sheet` and
    * `income_statement` positions in `history.metrics`. Both cost the same.
    * `years` keeps just the N most recent fiscal years in every per-year array.
+   * `scope` selects entity and/or group statements in `history.by_scope` (default: both).
+   * `year` selects one fiscal year (1900–2100); the server rejects combining it with `years` (422).
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
    */
   getFinancials(
     euId: string,
@@ -472,16 +480,24 @@ export class FirmenData {
        */
       includeLineItems?: boolean;
       years?: number;
+      scope?: ('entity' | 'group')[];
+      year?: number;
     } = {},
   ): Promise<CompanyFinancials> {
     return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}/financials`, {
       query: {
         details: options.details ?? options.includeLineItems,
         years: options.years,
+        scope: options.scope,
+        year: options.year,
       },
     });
   }
 
+  /**
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
+   */
   getShareholders(euId: string, options: LiveCallOptions = {}): Promise<ShareholdersReport> {
     return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}/shareholders`, {
       query: { fetch_realtime: options.fetchRealtime },
@@ -489,6 +505,10 @@ export class FirmenData {
     });
   }
 
+  /**
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
+   */
   getUbo(euId: string, options: LiveCallOptions = {}): Promise<UboReport> {
     return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}/ubo`, {
       query: { fetch_realtime: options.fetchRealtime },
@@ -496,6 +516,10 @@ export class FirmenData {
     });
   }
 
+  /**
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
+   */
   getHistory(euId: string, options: LiveCallOptions = {}): Promise<CompanyHistory> {
     return this.#request('GET', `/v1/companies/${encodeURIComponent(euId)}/history`, {
       query: { fetch_realtime: options.fetchRealtime },
@@ -506,6 +530,8 @@ export class FirmenData {
   /**
    * Check the registry live and list documents, including older versions.
    * A live, billed call: see {@link REALTIME_TIMEOUT_MS}.
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
    */
   listDocuments(
     euId: string,
@@ -521,6 +547,8 @@ export class FirmenData {
    * Presigned download URL for a register document. A live, billed call:
    * never retried once it may have reached the server, with a timeout of at
    * least {@link REALTIME_TIMEOUT_MS} unless `timeoutMs` is set.
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
    */
   downloadDocument(
     euId: string,
@@ -617,6 +645,10 @@ export class FirmenData {
 
   // -- subscriptions --------------------------------------------------------
 
+  /**
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
+   */
   listSubscriptions(filters: SubscriptionFilters = {}): Promise<SubscriptionList> {
     return this.#request('GET', '/v1/subscriptions', {
       query: filters as Record<string, QueryValue>,
@@ -628,6 +660,8 @@ export class FirmenData {
    *
    * Not retried on 5xx: a create that times out may already have been
    * applied, and a blind replay would produce a duplicate.
+   * A German id without its register-number suffix or branch-court part is accepted when it
+   * identifies exactly one company; otherwise an `AmbiguousCompanyIdError` lists the candidates.
    */
   createSubscription(body: SubscriptionCreateRequest): Promise<SubscriptionCreated> {
     return this.#request('POST', '/v1/subscriptions', { body });
