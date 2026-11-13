@@ -33,6 +33,13 @@ export interface ValidationIssue {
   message: string;
 }
 
+/** A canonical company matching an incomplete German id. */
+export interface CompanyIdCandidate {
+  eu_id: string;
+  name: string;
+  is_deleted: boolean;
+}
+
 export interface Problem {
   type?: string;
   title?: string;
@@ -43,6 +50,7 @@ export interface Problem {
   instance?: string;
   request_id?: string;
   errors?: ValidationIssue[];
+  candidates?: CompanyIdCandidate[];
 }
 
 export class FirmenDataError extends Error {
@@ -104,6 +112,24 @@ export class InsufficientCreditsError extends APIError {}
 export class NotFoundError extends APIError {}
 /** Conflicts with existing state. */
 export class ConflictError extends APIError {}
+/**
+ * An incomplete German id matched several companies; retry with one of `candidates[].eu_id`.
+ */
+export class AmbiguousCompanyIdError extends ConflictError {
+  readonly candidates: CompanyIdCandidate[];
+
+  constructor(
+    message: string,
+    init: {
+      statusCode: number;
+      problem?: Problem;
+      headers?: Record<string, string>;
+    },
+  ) {
+    super(message, init);
+    this.candidates = init.problem?.candidates ?? [];
+  }
+}
 /** Bad parameters — see `.errors`. */
 export class ValidationError extends APIError {}
 /** 5xx. Retried automatically for idempotent requests. */
@@ -138,6 +164,7 @@ const BY_SLUG: Record<string, new (m: string, i: never) => APIError> = {
   'insufficient-credits': InsufficientCreditsError as never,
   'not-found': NotFoundError as never,
   conflict: ConflictError as never,
+  'ambiguous-company-id': AmbiguousCompanyIdError as never,
   'validation-error': ValidationError as never,
   'rate-limit-exceeded': RateLimitError as never,
 };

@@ -139,6 +139,13 @@ Identity and seat, register reference, legal status from the commercial
 register and insolvency notices, industry classification, contact details
 (including `phones` and `primary_email`) and web presence.
 
+A German id without its register-number suffix or branch-court part is
+accepted when it identifies exactly one company, for example
+`DEG1207.HRB14323` for `DEG1207.HRB14323FF` or `DER2707.HRB3910` for
+`DER2707_R2701.HRB3910`. Otherwise, `AmbiguousCompanyIdError` lists the
+candidates (see [Errors](#errors)). The response body's `eu_id` is always
+the canonical id.
+
 ## Financial statements
 
 Filed annual accounts, parsed into figures rather than handed to you as PDFs.
@@ -165,6 +172,17 @@ per-year array to the most recent fiscal years:
 
 ```ts
 const lean = await fd.getFinancials(euId, { details: false, years: 5 });
+```
+
+`scope` selects which statements `history.by_scope` carries in full:
+`entity` for the company's own statements, `group` for consolidated
+statements, or both (the default). `year` selects a single fiscal year
+(1900–2100) in each per-year array; `summary` still describes the latest
+figures on record. Combining `year` with `years` raises `ValidationError`
+from the server.
+
+```ts
+const selected = await fd.getFinancials(euId, { scope: ['entity', 'group'], year: 2024 });
 ```
 
 `includeLineItems` from earlier versions still works but is deprecated: it is
@@ -394,17 +412,29 @@ try {
 }
 ```
 
-| Error                                    | Status | Meaning                                                        |
-| ---------------------------------------- | ------ | -------------------------------------------------------------- |
-| `AuthenticationError`                    | 401    | Missing/invalid key, or a keyless call used a paid feature     |
-| `TokenExpiredError`                      | 401    | Key expired                                                    |
-| `InsufficientCreditsError`               | 402    | Balance too low for this call                                  |
-| `NotFoundError`                          | 404    | No such company, list, subscription or event                   |
-| `ConflictError`                          | 409    | Conflicts with existing state                                  |
-| `ValidationError`                        | 422    | Bad parameters — see `.errors` (`{ param, message }[]`)        |
-| `RateLimitError`                         | 429    | Retries exhausted, or a long `Retry-After` — see `.retryAfter` |
-| `ServerError`                            | 5xx    | Retried automatically for idempotent calls                     |
-| `APIConnectionError` / `APITimeoutError` | —      | No response at all                                             |
+| Error                                    | Status | Meaning                                                            |
+| ---------------------------------------- | ------ | ------------------------------------------------------------------ |
+| `AuthenticationError`                    | 401    | Missing/invalid key, or a keyless call used a paid feature         |
+| `TokenExpiredError`                      | 401    | Key expired                                                        |
+| `InsufficientCreditsError`               | 402    | Balance too low for this call                                      |
+| `NotFoundError`                          | 404    | No such company, list, subscription or event                       |
+| `ConflictError`                          | 409    | Conflicts with existing state                                      |
+| `AmbiguousCompanyIdError`                | 409    | Incomplete German id matched several companies — see `.candidates` |
+| `ValidationError`                        | 422    | Bad parameters — see `.errors` (`{ param, message }[]`)            |
+| `RateLimitError`                         | 429    | Retries exhausted, or a long `Retry-After` — see `.retryAfter`     |
+| `ServerError`                            | 5xx    | Retried automatically for idempotent calls                         |
+| `APIConnectionError` / `APITimeoutError` | —      | No response at all                                                 |
+
+`AmbiguousCompanyIdError` extends `ConflictError`. Choose a canonical id
+from `candidates` before retrying:
+
+```ts
+import { AmbiguousCompanyIdError } from 'firmendata';
+await fd.getCompany('DER2707.HRB3910').catch((err: unknown) => {
+  if (!(err instanceof AmbiguousCompanyIdError)) throw err;
+  console.log(err.candidates); // Each has eu_id, name and is_deleted.
+});
+```
 
 ### Retries
 
