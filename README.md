@@ -1,8 +1,9 @@
 # firmendata
 
 Official TypeScript/JavaScript client for the [firmendata](https://firmendata.com)
-API — German, Swiss and Austrian company data from the Unternehmensregister,
-Handelsregister, the Swiss commercial register and the Austrian Firmenbuch:
+API — German, Swiss, Austrian and UK company data from the Unternehmensregister,
+Handelsregister, the Swiss commercial register, the Austrian Firmenbuch and
+Companies House:
 register search, parsed annual financial statements, company profiles,
 register documents, and ownership chains for KYC.
 
@@ -54,7 +55,7 @@ const fd = new FirmenData({ apiKey: process.env.FIRMENDATA_API_KEY });
 
 ## Search the register
 
-The main entry point for German, Swiss and Austrian companies. Different
+The main entry point for German, Swiss, Austrian and UK companies. Different
 filters combine with AND, repeated values with OR.
 
 ```ts
