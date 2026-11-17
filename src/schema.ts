@@ -42,7 +42,7 @@ export interface paths {
         };
         /**
          * Advanced search
-         * @description Full-text + filter search over German, Swiss and Austrian commercial registers. Cursor-paginated,
+         * @description Full-text + filter search over German, Swiss and Austrian commercial registers and the UK Companies House register. Cursor-paginated,
          *     up to 50 hits per page. `total_approx` caps at 10,000 — tighten filters for an
          *     exact count.
          *
@@ -59,7 +59,9 @@ export interface paths {
          *     Setting `fetch_realtime=true` additionally searches the German registers live
          *     for `q` (or `company_name`, one of which is then required) and appends any
          *     companies not yet known to firmendata to the first page, carrying identity and
-         *     seat only. First page only — omit `cursor`.
+         *     seat only. First page only — omit `cursor`. Not run when `country` is set to a
+         *     country other than `DE` (GB, CH, AT): the response is then the local result,
+         *     with `freshness.realtime_fetching_status=realtime_fetching_disabled`.
          *
          *
          *     ## Pricing
@@ -135,7 +137,8 @@ export interface paths {
          *     When the registries are unreachable or the company is no longer listed,
          *     the response serves the stored catalog with the outcome in `freshness`.
          *     Unreachable-registry, unavailable-company and empty answers are not billed.
-         *     Swiss and Austrian companies return an empty list with `coverage.status=not_applicable`.
+         *     Swiss, Austrian and UK companies return an empty list with `coverage.status=not_applicable`;
+         *     for UK companies `coverage.external_url` links to the filing history at Companies House.
          *     This endpoint accepts no `fetch_realtime` parameter.
          *
          *
@@ -327,17 +330,18 @@ export interface paths {
          *     detail.
          *
          *     - **`fetch_realtime`** — optional. When `true`, refresh the
-         *       underlying register history from the German registries before
-         *       responding. Adds upstream latency (typically several seconds).
+         *       underlying register history from the German registries (or, for a UK
+         *       company, its status from Companies House) before responding. Adds upstream latency (typically several seconds).
          *       Failures are surfaced via `freshness.realtime_fetching_status`; the response
          *       still falls back to the most recent available data when a refresh
          *       fails.
          *
          *     `coverage.status` is `not_available` when no chronological extract exists
-         *     for the company — the Swiss commercial register publishes none, Austrian
+         *     for the company — the Swiss commercial register and Companies House publish none, Austrian
          *     history is not available yet, and some German entries have not been
          *     retrieved yet. Such responses are not charged;
-         *     Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB).
+         *     Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB),
+         *     and UK companies theirs from Companies House.
          *     A 404 means the company itself is unknown.
          *     The same data backs the `history` webhook subscription type, so the
          *     shape returned here is exactly the shape downstream consumers fetch
@@ -492,6 +496,9 @@ export interface paths {
          *       `effective_share_percent` sums those lower bounds over the branches into
          *       the root and is `0` when none carries a share band — so for GB it can be
          *       25 or below, and the person is still a beneficial owner.
+         *     - `fetch_realtime=true` refreshes the root company from Companies House and
+         *       is billed at the realtime price; `freshness.last_checked_at` is that refresh
+         *       when the chain holds no other company, otherwise the newest PSC snapshot.
          *     - Persons carry the year of birth only (`YYYY-01-01`); Companies House
          *       publishes month and year. No address is published.
          *     - `partial` names what the chain could not show: organisations we cannot
@@ -1089,13 +1096,13 @@ export interface components {
             city?: string | null;
             /**
              * Country Code
-             * @description ISO 3166-1 alpha-2 country code of the address: `DE`, `CH` or `AT`.
+             * @description ISO 3166-1 alpha-2 country code of the address: `DE`, `CH`, `AT` or `GB`.
              * @default DE
              */
             country_code: string;
             /**
              * Federal State
-             * @description State the address lies in: the Bundesland for a German address, the canton (official name, e.g. `Zug`, `Genève`) for a Swiss one, the Bundesland (e.g. `Salzburg`) for an Austrian one. Read from the address itself, so it can differ from the canton of a Swiss company's register office (`register_canton`). `null` when the address does not determine it.
+             * @description State the address lies in: the Bundesland for a German address, the canton (official name, e.g. `Zug`, `Genève`) for a Swiss one, the Bundesland (e.g. `Salzburg`) for an Austrian one, the ONS region or nation (e.g. `London`, `Scotland`) for a UK one. Read from the address itself, so it can differ from the canton of a Swiss company's register office (`register_canton`). `null` when the address does not determine it.
              */
             federal_state?: string | null;
             /**
@@ -1267,18 +1274,18 @@ export interface components {
             object: "autocomplete_hit";
             /**
              * Register Canton
-             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German and Austrian companies.
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for every other country.
              * @example VD
              */
             register_canton?: string | null;
             /**
              * Register Court
-             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
+             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; the jurisdiction (England and Wales, Scotland or Northern Ireland) for UK companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
              * Register Number
-             * @description Register entry number (digits only). Combine with `register_type` for a full reference.
+             * @description Register entry number (digits only). Combine with `register_type` for a full reference. `null` for UK companies (their company number is in `eu_id`).
              * @example 12345
              */
             register_number?: number | null;
@@ -1295,7 +1302,7 @@ export interface components {
             registered_seat?: string | null;
             /**
              * Uid
-             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German and Austrian companies.
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for every other country.
              * @example CHE-105.909.036
              */
             uid?: string | null;
@@ -1848,9 +1855,14 @@ export interface components {
             financial_summary?: components["schemas"]["FinancialSummaryBlock"] | null;
             /**
              * First Register Entry At
-             * @description Date of the company's first observable register entry. A date of 1 January usually means the register states only the year.
+             * @description Date of the current register entry: registered here since. A date of 1 January usually means the register states only the year.
              */
             first_register_entry_at?: string | null;
+            /**
+             * Founded At
+             * @description Company founding date used in search; unknown original dates of continuing entities are null.
+             */
+            founded_at?: string | null;
             /** @description Founder, family-involvement and succession assessment derived from the register's board history. `null` when the company could not be assessed at all. */
             founder_profile?: components["schemas"]["FounderProfileBlock"] | null;
             /**
@@ -1913,22 +1925,22 @@ export interface components {
              * @constant
              */
             object: "company";
-            /** @description The register entry this company's entry continues, when the register records one (seat move to another court district or transfer to another court). `null` when none is recorded. */
+            /** @description The register entry this company's entry continues, when the register records one (seat move, court transfer, change of legal form or continuing merger). `null` when none is recorded. */
             previous_registration?: components["schemas"]["PreviousRegistration"] | null;
             /**
              * Register Canton
-             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German and Austrian companies.
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for every other country.
              * @example VD
              */
             register_canton?: string | null;
             /**
              * Register Court
-             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
+             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; the jurisdiction (England and Wales, Scotland or Northern Ireland) for UK companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
              * Register Number
-             * @description Register entry number (digits only). Combine with `register_type` for a full reference.
+             * @description Register entry number (digits only). Combine with `register_type` for a full reference. `null` for UK companies (their company number is in `eu_id`).
              * @example 12345
              */
             register_number?: number | null;
@@ -1946,7 +1958,7 @@ export interface components {
             share_capital?: components["schemas"]["Money"] | null;
             /**
              * Uid
-             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German and Austrian companies.
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for every other country.
              * @example CHE-105.909.036
              */
             uid?: string | null;
@@ -2304,13 +2316,13 @@ export interface components {
             legal_forms?: components["schemas"]["LegalFormEntry"][];
             /**
              * Legal Status
-             * @description Current legal status derived from the timeline (`active`, `dissolved`, `in_liquidation`, `insolvent`). `null` when the German register history is not available. Swiss companies still receive their legal status from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices.
+             * @description Current legal status derived from the timeline (`active`, `dissolved`, `in_liquidation`, `insolvent`). `null` when the German register history is not available. Swiss companies still receive their legal status from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices, and UK companies theirs from Companies House.
              * @example active
              */
             legal_status?: string | null;
             /**
              * Legal Status Events
-             * @description Insolvency, Auflösung and Liquidation events, newest first, merged and deduplicated across the source registries. Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices when register history is not available. Empty for a company that has never been in insolvency or liquidation.
+             * @description Insolvency, Auflösung and Liquidation events, newest first, merged and deduplicated across the source registries. UK companies carry Companies House's status; Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices when register history is not available. Empty for a company that has never been in insolvency or liquidation.
              */
             legal_status_events?: components["schemas"]["LegalStatusEvent"][];
             /**
@@ -2541,7 +2553,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description `available` for companies in the German registers; `not_applicable` for the Swiss commercial register, which publishes no document downloads, and for the Austrian Firmenbuch. An available catalog may be empty.
+             * @description `available` for companies in the German registers; `not_applicable` for the Swiss commercial register, which publishes no document downloads, for the Austrian Firmenbuch, and for UK companies (see `external_url` for their Companies House filing history). An available catalog may be empty.
              * @enum {string}
              */
             status: "available" | "not_applicable";
@@ -3241,7 +3253,7 @@ export interface components {
         Freshness: {
             /**
              * Last Checked At
-             * @description Timestamp (UTC) of the last successful refresh of the underlying data slice from the German registries. Compare against your own staleness tolerance to decide whether to re-issue the call with `fetch_realtime=true`. `null` when the slice has never been successfully fetched for this company.
+             * @description Timestamp (UTC) of the last successful refresh of the underlying data slice from the register. Compare against your own staleness tolerance to decide whether to re-issue the call with `fetch_realtime=true`. `null` when the slice has never been successfully fetched for this company.
              * @example 2026-04-30T12:14:08Z
              */
             last_checked_at?: string | null;
@@ -3366,7 +3378,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description `available`: the chronological register history is available and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register publishes none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB).
+             * @description `available`: the chronological register history is available and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register and Companies House publish none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies and UK companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) and Companies House respectively.
              * @enum {string}
              */
             status: "available" | "not_available";
@@ -4160,15 +4172,25 @@ export interface components {
             eu_id?: string | null;
             /**
              * Kind
-             * @description `seat_move`: the company moved its registered seat into another court's district and got a new register entry; `court_change`: the register entry was transferred to another court without a stated seat move.
+             * @description `seat_move`: the company moved its registered seat into another court's district and got a new register entry; `court_change`: the register entry was transferred to another court without a stated seat move; `formwechsel`: the company continued under another legal form; `merger_continuity`: the company continued as the absorbing entity in a merger.
              * @enum {string}
              */
-            kind: "seat_move" | "court_change";
+            kind: "seat_move" | "court_change" | "formwechsel" | "merger_continuity";
+            /**
+             * Name
+             * @description Name of the predecessor recorded in the register.
+             */
+            name?: string | null;
             /**
              * Original First Register Entry At
              * @description First register entry of the earliest predecessor we could trace (up to five earlier entries). `first_register_entry_at` stays the date of the current entry.
              */
             original_first_register_entry_at?: string | null;
+            /**
+             * Original Founded At
+             * @description Founding date of the earliest predecessor we could trace; the company's search founding date uses it.
+             */
+            original_founded_at?: string | null;
             /**
              * Register Court
              * @description Court that kept the previous register entry.
@@ -4453,18 +4475,18 @@ export interface components {
             profit_year?: number | null;
             /**
              * Register Canton
-             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German and Austrian companies.
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for every other country.
              * @example VD
              */
             register_canton?: string | null;
             /**
              * Register Court
-             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
+             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; the jurisdiction (England and Wales, Scotland or Northern Ireland) for UK companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
              * Register Number
-             * @description Register entry number (digits only). Combine with `register_type` for a full reference.
+             * @description Register entry number (digits only). Combine with `register_type` for a full reference. `null` for UK companies (their company number is in `eu_id`).
              * @example 12345
              */
             register_number?: number | null;
@@ -4500,7 +4522,7 @@ export interface components {
             total_assets_year?: number | null;
             /**
              * Uid
-             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German and Austrian companies.
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for every other country.
              * @example CHE-105.909.036
              */
             uid?: string | null;
@@ -5726,7 +5748,7 @@ export interface components {
             section?: string | null;
             /**
              * Source Classification
-             * @description Classification version the code was originally recorded in, when different from canonical WZ 2025: WZ 2008, NACE Rev. 2, NACE Rev. 2.1 or ÖNACE 2025, Austria's official national version of NACE Rev. 2.1, for Austrian companies.
+             * @description Classification version the code was originally recorded in, when different from canonical WZ 2025: WZ 2008, NACE Rev. 2, NACE Rev. 2.1 or ÖNACE 2025, Austria's official national version of NACE Rev. 2.1, for Austrian companies; or UK SIC 2007, the company's own declaration, for UK companies (published as declared; `source_title` is null for it).
              */
             source_classification?: ("wz_2008" | "nace_rev_2" | "nace_rev_2_1" | "oenace_2025" | "uk_sic_2007") | null;
             /**
@@ -5756,9 +5778,9 @@ export interface operations {
                 q: string;
                 /** @description Maximum number of suggestions to return. Hard upper bound is 25. */
                 limit?: number;
-                /** @description Restrict all suggestions to the company register: DE, CH or AT. Case-insensitive; omitted searches all countries. */
+                /** @description Restrict all suggestions to the company register: DE, CH, AT or GB. Case-insensitive; omitted searches all countries. */
                 country?: ("DE" | "CH" | "AT" | "GB") | null;
-                /** @description When `true`, search the German company registers live for the keyword and include any companies not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Adds upstream latency (typically a few seconds) and a higher credit cost. Refresh failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
+                /** @description When `true`, search the German company registers live for the keyword and include any companies not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Not run when `country` is set to a country other than DE. Adds upstream latency (typically a few seconds) and a higher credit cost. Refresh failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -6140,12 +6162,34 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Temporarily unavailable: the service is briefly overloaded and the query ran out of time. Not charged. Retry the same request (same `cursor`) after `Retry-After` seconds. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the same request. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "The search timed out because the service is busy right now. Retry the same request in 10 seconds.",
+                     *       "instance": "/v1/companies/search",
+                     *       "message": "The search timed out because the service is busy right now. Retry the same request in 10 seconds.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 503,
+                     *       "title": "Service Unavailable.",
+                     *       "type": "https://api.firmendata.com/problems/service-unavailable"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getCompanyDetail: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the company's register snapshot from the German registries before building the response, so the underlying data is as fresh as possible. Adds upstream latency (typically several seconds). Refresh failures do not fail the request — the most recent available data is returned instead. The chronological register history is refreshed by `/v1/companies/{eu_id}/history` instead — this endpoint does not refresh it. */
+                /** @description Affects German (DE) and UK (GB) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the company's register snapshot from the German registries, or from Companies House for a UK (GB) company, before building the response, so the underlying data is as fresh as possible. Adds upstream latency (typically several seconds). Refresh failures do not fail the request — the most recent available data is returned instead. The chronological register history is refreshed by `/v1/companies/{eu_id}/history` instead — this endpoint does not refresh it. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -6468,7 +6512,7 @@ export interface operations {
                 file_id?: string | null;
                 /** @description Specific document version from the live document list. Cannot be combined with `file_id` or `fetch_realtime=true`. */
                 document_id?: string | null;
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, fetch the requested `file_type` from the German registries before resolving the file, so the presigned URL points at the freshest version. Adds upstream latency (typically several seconds). Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Only affects German (DE) companies; ignored for Swiss (CH), Austrian (AT) and UK (GB) companies, with no realtime surcharge. When `true`, fetch the requested `file_type` from the German registries before resolving the file, so the presigned URL points at the freshest version. Adds upstream latency (typically several seconds). Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -6799,7 +6843,7 @@ export interface operations {
     getCompanyHistory: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the chronological register history from the German registries before responding. Adds upstream latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Affects German (DE) and UK (GB) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the chronological register history from the German registries, or a UK (GB) company's status from Companies House, before responding. Adds upstream latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -7119,7 +7163,7 @@ export interface operations {
     getCompanyUbo: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH), Austrian (AT) and UK (GB) companies, with no realtime surcharge. When `true`, refetch the latest Liste der Gesellschafter for every German GmbH/UG visited in the ownership chain before building the graph. Adds noticeable latency. Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Affects German (DE) and UK (GB) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refetch the latest Liste der Gesellschafter for every German GmbH/UG visited in the ownership chain before building the graph; for a UK company, refresh the root company from Companies House (billed at the realtime price). Adds noticeable latency. Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
