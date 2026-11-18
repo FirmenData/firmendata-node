@@ -675,8 +675,39 @@ export interface paths {
         /**
          * Create subscription
          * @description Create a webhook, email, or async (poll-only) subscription for a single
-         *     German (DE) company. Subscriptions are currently available for German
-         *     companies only.
+         *     company. German (DE) companies support every `subscription_type`;
+         *     Austrian (AT), Swiss (CH) and UK (GB) companies support the types their
+         *     register has data for (a 422 names the reason otherwise):
+         *
+         *     | type | DE | AT | CH | GB |
+         *     |---|---|---|---|---|
+         *     | `details` | ✓ | ✓ | ✓ | ✓ |
+         *     | `history` | ✓ | ✓ ¹ | ✓ ¹ | ✓ ¹ |
+         *     | `shareholders` | ✓ | – | ✓ GmbH / Sàrl / Sagl | – ² |
+         *     | `ubo` | ✓ | – | – | ✓ PSC |
+         *     | `doc_*` | ✓ | – | – | – |
+         *
+         *     ¹ Outside Germany `history` carries the legal-status timeline (insolvency,
+         *     liquidation, dissolution); fires when a new legal-status event appears.
+         *     ² UK owners are the persons with significant control: subscribe to `ubo`.
+         *
+         *     What counts as a change, by country:
+         *
+         *     * **DE** — a newer Handelsregister entry / document publish date; every
+         *       check reads the register live.
+         *     * **AT / CH** — a newer last register entry (Firmenbuch entry, Swiss
+         *       Official Gazette of Commerce publication) in the register data
+         *       firmendata keeps current; Swiss `shareholders` fires on a newer
+         *       replayed publication. No live fetch: `freshness` shows when the data
+         *       was last loaded.
+         *     * **GB** — every check re-reads the company from Companies House.
+         *       `details` fires on a newer Companies House filing (any category:
+         *       officers, address, name, PSC, accounts, confirmation statement,
+         *       Gazette notices); `ubo` on a newer PSC notification or cessation
+         *       anywhere in the UK ownership chain.
+         *
+         *     `publish_date` is a date: several changes on one day are one
+         *     notification.
          *
          *     ## Async (poll-only) subscriptions
          *
@@ -4847,8 +4878,8 @@ export interface components {
              *
              *     - `recurring` — the **first** delivery is a snapshot of the current state. After that, you only get a notification when there is an actual update.
              *     - `one_time` — keep polling at the configured `cadence` *until* the first successful delivery, then stop. Useful when:
-             *       - the document you're waiting for is not yet available on Handelsregister (e.g. a Gesellschafterliste not yet filed, a Bilanz not yet published in Bundesanzeiger),
-             *       - or Handelsregister is currently failing to serve the file due to a technical issue on their end (transient 5xx, anti-bot blocks) and you want firmendata to keep retrying on your behalf without you having to call the API on a schedule.
+             *       - the document you're waiting for is not yet available on the register (e.g. a Gesellschafterliste not yet filed on Handelsregister),
+             *       - or the register is currently failing to serve the file due to a technical issue on their end (transient 5xx, anti-bot blocks) and you want firmendata to keep retrying on your behalf without you having to call the API on a schedule.
              *       The subscription stays in place after the first successful delivery as a record — `DELETE` it when you're done.
              * @default recurring
              */
@@ -4872,7 +4903,7 @@ export interface components {
              * @description Optional terminal date. After this calendar day the subscription stops checking for updates. **Default: `null`** — open-ended subscription.
              */
             subscription_end_date?: string | null;
-            /** @description Which slice of company data to track. See the `SubscriptionType` schema for the per-value coverage table — `shareholders` works for every GmbH/UG (it auto-falls-back to Musterprotokoll when no Liste is filed), while `doc_articles_of_association` does not — pick `doc_model_protocol` for the founding deed of simplified-procedure companies. */
+            /** @description Which slice of company data to track. Not every type is available for every country (422 otherwise): German companies support all types; AT `details`/`history`; CH `details`/`history`/`shareholders` (GmbH only); GB `details`/`history`/`ubo`. See the `SubscriptionType` schema for the per-value coverage table — `shareholders` works for every GmbH/UG (it auto-falls-back to Musterprotokoll when no Liste is filed), while `doc_articles_of_association` does not — pick `doc_model_protocol` for the founding deed of simplified-procedure companies. */
             subscription_type: components["schemas"]["SubscriptionType"];
             /**
              * Webhook Url
@@ -5404,14 +5435,15 @@ export interface components {
          *     - `shareholders` **auto-falls-back** to the Musterprotokoll when no Liste der Gesellschafter is filed — pick this for cap-table tracking regardless of legal form.
          *     - `doc_articles_of_association` does **not** fall back — pick `doc_model_protocol` when you need the founding deed of a simplified-procedure company.
          *     - `doc_shareholder_list` does **not** fall back — pick `doc_model_protocol` for Musterprotokoll-only companies, or `shareholders` for parsed cap-table data that works for any GmbH/UG.
+         *     - `doc_*` subscriptions follow German register documents and are available for German (DE) companies only.
          *     - `doc_*` subscriptions only fire for companies that actually filed the matching document; mismatches return `scrape_failed_file_not_found` until the document appears (use `mode=one_time` if you're waiting for a one-off filing).
          *
          *     | Value | What it tracks |
          *     |---|---|
-         *     | `details` | Current company snapshot — identity, registered address, current board, share capital, and lifecycle status. The webhook body's `data.links.company_detail` resolves to `GET /v1/companies/{eu_id}` for the full parsed JSON. Available for every Handelsregister-registered company. |
-         *     | `history` | Chronological register history — every recorded change to company name (firma), seat (Sitz), capital, board, business purpose, etc. The webhook body's `data.links.company_history` resolves to `GET /v1/companies/{eu_id}/history` for the full parsed timeline. Available for every Handelsregister-registered company. |
-         *     | `shareholders` | Cap table — primarily from the **Liste der Gesellschafter** (list of shareholders), filed by GmbH and UG (haftungsbeschränkt). **Auto-fallback to Musterprotokoll:** companies founded via the simplified procedure under §2 Abs. 1a GmbHG do not file a separate Liste — their **Musterprotokoll** (model protocol) names the founders and their share allocations directly. firmendata handles this transparently: when no Liste has been filed, the `shareholders` subscription derives the cap table from the Musterprotokoll instead. So `shareholders` is the right subscription for cap-table updates regardless of which document the company filed. The webhook body links to `GET /v1/companies/{eu_id}/shareholders` for the parsed cap table. |
-         *     | `ubo` | Beneficial owners (**wirtschaftlich Berechtigte**) — natural persons who ultimately own or control the company, derived by walking the Gesellschafter graph. Each dispatch refreshes the cap-table document for **every** German GmbH/UG in the ownership chain (root and parents), not just the root, and fires when **any** chain member's Liste der Gesellschafter (or Musterprotokoll fallback) gets a newer publish date. The webhook body carries the full UBO report (graph, `beneficial_owners`, `potential_beneficial_owners`, `coverage` with `reason`) plus a per-node `chain` breakdown (`eu_id`, `depth`, refresh `status`, latest `publish_date`).  `coverage.status="partial"` means one or more unresolved branches carry effective share above 25 % at the root and could hide a UBO — `potential_beneficial_owners` lists those entities (foreign holdings, unlisted parents, depth-capped branches) with their summed effective share so KYC consumers can decide whether to escalate. `coverage.status="available"` with `has_unresolved_branches=true` means unresolved branches exist but are immaterial (combined share below the threshold or isolated by sub-threshold control links).  Transient per-node failures (e.g. `documents_temporarily_unavailable`, `platform_unavailable`) delay notification until the next successful check; the next cadence retries. Other per-node outcomes (e.g. `file_unavailable`, `skipped_not_applicable` for non-GmbH chain members) are surfaced in the chain breakdown but do **not** block delivery — the rest of the chain still ships. |
+         *     | `details` | Current company snapshot — identity, registered address, current board, share capital, and lifecycle status. The webhook body's `data.links.company_detail` resolves to `GET /v1/companies/{eu_id}` for the full parsed JSON. Available for German (DE), Austrian (AT), Swiss (CH) and UK (GB) companies. DE fires on a newer Handelsregister entry, AT/CH on a newer last register entry in the register data firmendata keeps current, GB on a newer Companies House filing of any category. |
+         *     | `history` | Chronological register history — every recorded change to company name (firma), seat (Sitz), capital, board, business purpose, etc. The webhook body's `data.links.company_history` resolves to `GET /v1/companies/{eu_id}/history` for the full parsed timeline. Available for every Handelsregister-registered company. For Austrian (AT), Swiss (CH) and UK (GB) companies the history is the legal-status timeline only (insolvency, liquidation, dissolution), and the subscription fires on a new legal-status event. |
+         *     | `shareholders` | Cap table — primarily from the **Liste der Gesellschafter** (list of shareholders), filed by GmbH and UG (haftungsbeschränkt). **Auto-fallback to Musterprotokoll:** companies founded via the simplified procedure under §2 Abs. 1a GmbHG do not file a separate Liste — their **Musterprotokoll** (model protocol) names the founders and their share allocations directly. firmendata handles this transparently: when no Liste has been filed, the `shareholders` subscription derives the cap table from the Musterprotokoll instead. So `shareholders` is the right subscription for cap-table updates regardless of which document the company filed. The webhook body links to `GET /v1/companies/{eu_id}/shareholders` for the parsed cap table. Also available for Swiss (CH) GmbH / Sàrl / Sagl companies, whose cap table is replayed from Swiss Official Gazette of Commerce publications (fires on a newer replayed publication). Not available for AT or GB (UK owners: `ubo`). |
+         *     | `ubo` | Beneficial owners (**wirtschaftlich Berechtigte**) — natural persons who ultimately own or control the company, derived by walking the Gesellschafter graph. Each dispatch refreshes the cap-table document for **every** German GmbH/UG in the ownership chain (root and parents), not just the root, and fires when **any** chain member's Liste der Gesellschafter (or Musterprotokoll fallback) gets a newer publish date. The webhook body carries the full UBO report (graph, `beneficial_owners`, `potential_beneficial_owners`, `coverage` with `reason`) plus a per-node `chain` breakdown (`eu_id`, `depth`, refresh `status`, latest `publish_date`).  `coverage.status="partial"` means one or more unresolved branches carry effective share above 25 % at the root and could hide a UBO — `potential_beneficial_owners` lists those entities (foreign holdings, unlisted parents, depth-capped branches) with their summed effective share so KYC consumers can decide whether to escalate. `coverage.status="available"` with `has_unresolved_branches=true` means unresolved branches exist but are immaterial (combined share below the threshold or isolated by sub-threshold control links).  Transient per-node failures (e.g. `documents_temporarily_unavailable`, `platform_unavailable`) delay notification until the next successful check; the next cadence retries. Other per-node outcomes (e.g. `file_unavailable`, `skipped_not_applicable` for non-GmbH chain members) are surfaced in the chain breakdown but do **not** block delivery — the rest of the chain still ships.  **UK (GB) companies:** the owners are the persons with significant control (PSC). Each dispatch re-reads the company from Companies House and fires on a newer PSC notification, cessation or change anywhere in the UK ownership chain; the body carries the UBO report and `max_publish_date` (no `chain` breakdown). Not available for AT or CH. |
          *     | `doc_articles_of_association` | **Articles of association** document — Germany's constitutional company document, called **Gesellschaftsvertrag** (GmbH, KG, OHG, GbR), **Satzung** (AG, KGaA, eG, Verein), or **Statut** (some specific forms) depending on legal form. Each is the constitutional document for its legal form.  Webhook body's `data.download.url` is a 7-day presigned URL to the PDF — the customer can fetch the file directly without a follow-up API call. After the URL expires, `GET /v1/companies/{eu_id}/documents/download?file_type=articles_of_association` mints a fresh one.  **Not all companies have one.** Companies founded via the simplified procedure under §2 Abs. 1a GmbHG file a **Musterprotokoll** in its place — subscribe to `doc_model_protocol` for those. |
          *     | `doc_company_registration` | **Initial company registration filing (Anmeldung zur Eintragung)** — the notarial document submitted to register the company. Webhook body carries a 7-day presigned download URL (`data.download.url`). Available for any newly-registered company; fires when a new Anmeldung is filed. |
          *     | `doc_model_protocol` | **Model protocol document (Musterprotokoll)** — the simplified notarial founding deed for small GmbH and UG (haftungsbeschränkt) companies under §2 Abs. 1a GmbHG. Legally substitutes for **both** the Articles of Association and the Liste der Gesellschafter for these companies. The Musterprotokoll itself names the founders, their share allocations, and the basic company terms in a single document.  Webhook body carries a 7-day presigned download URL (`data.download.url`). Only companies founded via the simplified procedure have one; for everyone else this subscription reports `scrape_failed_file_not_found`. For **cap-table changes** — regardless of which document was filed — subscribe to `shareholders` instead (it auto-falls-back to the Musterprotokoll when no Liste has been filed). |
