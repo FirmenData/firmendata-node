@@ -4,6 +4,32 @@
  */
 
 export interface paths {
+    "/v1/account/credits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get your credit balance
+         * @description Credits left on the account that owns the bearer token, split into the
+         *     free monthly allowance (expires at `next_free_reset`) and purchased credits
+         *     (never expire). Debits spend the free monthly credits first.
+         *
+         *     **Free:** this call costs 0 credits and works with a balance of 0. Every
+         *     other response also reports what it cost in the `X-Credits-Charged` header,
+         *     so a client can track its spend without polling this endpoint.
+         */
+        get: operations["get_credit_balance_v1_account_credits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/companies/autocomplete": {
         parameters: {
             query?: never;
@@ -2500,6 +2526,18 @@ export interface components {
             pagination?: components["schemas"]["PaginationInfo"];
         };
         /**
+         * CompanyNameMatch
+         * @description How `company_name` is matched.
+         *
+         *     - `words` (default) — the name starts with the query, or contains every
+         *       query word anywhere.
+         *     - `prefix` — the name starts with the query, nothing else.
+         *
+         *     Both ignore case, accents and legal-form suffixes.
+         * @enum {string}
+         */
+        CompanyNameMatch: "words" | "prefix";
+        /**
          * CompanySize
          * @description Statutory size class under § 267 / § 267a HGB, read from the filing.
          *
@@ -2561,6 +2599,55 @@ export interface components {
          * @enum {string}
          */
         Country: "DE" | "CH" | "AT" | "GB";
+        /**
+         * CreditBalance
+         * @description Credits left on the account that owns the bearer token.
+         */
+        CreditBalance: {
+            /**
+             * Balance
+             * @description Credits you can spend now: `free_monthly` + `purchased`. A call that costs more than this is rejected with `402`.
+             * @example 1250
+             */
+            balance: number;
+            /**
+             * Free Monthly
+             * @description Free monthly credits left inside `balance`. Spent first; whatever is left expires at `next_free_reset`.
+             * @example 250
+             */
+            free_monthly: number;
+            /**
+             * Free Monthly Allowance
+             * @description What `free_monthly` is reset to at `next_free_reset`. `0` when the account receives no free monthly credits.
+             * @example 800
+             */
+            free_monthly_allowance: number;
+            /**
+             * Next Free Reset
+             * @description When the free monthly credits are next reset (00:00 Europe/Berlin on the 1st of the month). `null` when the account receives no free monthly credits.
+             * @example 2026-12-01T00:00:00+01:00
+             */
+            next_free_reset?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `credit_balance`.
+             * @default credit_balance
+             * @constant
+             */
+            object: "credit_balance";
+            /**
+             * Purchased
+             * @description Purchased (top-up) and granted credits inside `balance`. They never expire.
+             * @example 1000
+             */
+            purchased: number;
+            /**
+             * Spent Last 7 Days
+             * @description Credits your API calls spent in the last 7 days, to forecast how long `balance` lasts.
+             * @example 340
+             */
+            spent_last_7_days: number;
+        };
         /** DocumentsCoverage */
         DocumentsCoverage: {
             /**
@@ -3295,7 +3382,7 @@ export interface components {
             object: "freshness";
             /**
              * Realtime Fetching Status
-             * @description Outcome of the realtime fetch attempt for this request (`fetch_realtime=true`). `realtime_fetching_disabled` when the parameter was not set; `success` when fresh data was merged into the response; otherwise the response falls back to the cached read and this field reports why.
+             * @description Outcome of the realtime fetch attempt for this request (`fetch_realtime=true`). `realtime_fetching_disabled` when the parameter was not set (the default: a cached read) or does not apply to this company's country or this endpoint; `success` when fresh data was merged into the response; otherwise the response falls back to the cached read and this field reports why.
              * @enum {string}
              */
             realtime_fetching_status: "success" | "platform_unavailable" | "documents_temporarily_unavailable" | "file_unavailable" | "company_unavailable" | "realtime_fetching_disabled";
@@ -5801,6 +5888,96 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_credit_balance_v1_account_credits_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's current credit balance. */
+            200: {
+                headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditBalance"];
+                };
+            };
+            /** @description Missing, invalid, revoked, or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 401,
+                     *       "title": "Authentication required.",
+                     *       "type": "https://api.firmendata.com/problems/unauthenticated"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded. Rejected requests do not consume the limit or any credits. Honour `Retry-After` (seconds) before retrying. */
+            429: {
+                headers: {
+                    /** @description Numeric limit of the tighter window currently applying. */
+                    "RateLimit-Limit"?: number;
+                    /** @description Requests left in that window (0 on 429). */
+                    "RateLimit-Remaining"?: number;
+                    /** @description Seconds until the window resets. */
+                    "RateLimit-Reset"?: number;
+                    /** @description Seconds to wait before the next request will succeed. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
+                     *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 429,
+                     *       "title": "Too many requests.",
+                     *       "type": "https://api.firmendata.com/problems/rate-limit-exceeded"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 500,
+                     *       "title": "Internal server error.",
+                     *       "type": "https://api.firmendata.com/problems/server-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     autocompleteCompanies: {
         parameters: {
             query: {
@@ -5938,10 +6115,12 @@ export interface operations {
     searchCompanies: {
         parameters: {
             query?: {
-                /** @description Unified keyword, tried as an eu_id, then a company-name prefix, then a person name — falling through whenever a phase returns nothing. Overrides `company_name`, `eu_id` and `person_name` when supplied alongside them. */
+                /** @description Unified keyword, tried as an eu_id, then as a company name (matched like `company_name`), then a person name — falling through whenever a phase returns nothing; when even the person reading finds nothing, looser name rewrites are tried (city or bracketed text dropped, compound words joined, close spellings). `company_name` never loosens like this. Overrides `company_name`, `eu_id` and `person_name` when supplied alongside them. */
                 q?: string | null;
-                /** @description Company name prefix, ignoring case, accents, quotes and invisible characters — `Müller "Süd" GmbH` and `Müller Süd GmbH` match the same company. The legal-form suffix is kept, so `Bosch GmbH` narrows against `Bosch`. */
+                /** @description Company name, matched by words and ranked by relevance, not a pure prefix filter. A company matches when its name starts with the query or contains every query word anywhere (`bosch` finds `Robert Bosch GmbH`). Legal forms in the query (`GmbH`, `AG`, `Aktiengesellschaft`, `Ltd`, …) are ignored for matching, so `Siemens AG` finds `Siemens Aktiengesellschaft`, and `Allianz Versicherungs-AG` also finds a name like `… Generalvertretung der Allianz Versicherungs AG`. Ranking puts exact names (the query plus at most a legal form) first, then names starting with the query, then word matches, weighted by company size. Case, accents, quotes, umlaut spellings (`ü`/`ue`) and invisible characters are ignored — `Müller "Süd" GmbH` and `Mueller Süd GmbH` match the same company. */
                 company_name?: string | null;
+                /** @description How `company_name` is matched; only valid together with `company_name` (not with `q`). `words` (default): the name starts with the query or contains every query word anywhere. `prefix`: the name starts with the query, nothing else. Both ignore case, accents and legal-form suffixes. */
+                company_name_match?: components["schemas"]["CompanyNameMatch"] | null;
                 /** @description Exact eu_id lookup (no prefix expansion). */
                 eu_id?: string | null;
                 /** @description Maximum number of hits to return per page. Hard upper bound is 50. */
