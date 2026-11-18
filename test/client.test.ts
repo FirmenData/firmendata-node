@@ -87,16 +87,19 @@ describe('request shaping', () => {
     expect(headers.Authorization).toBe('Bearer firmendata_live_xyz');
   });
 
-  it.each(['DE', 'CH', 'AT'] as const)('encodes autocomplete country %s', async (country) => {
-    const { client, fetchSpy } = clientWith(() => jsonResponse(200, { data: [] }));
-    await client.autocomplete('siemens', { country, limit: 10, fetchRealtime: true });
-    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
-    expect(url.pathname).toBe('/v1/companies/autocomplete');
-    expect(url.searchParams.get('q')).toBe('siemens');
-    expect(url.searchParams.get('country')).toBe(country);
-    expect(url.searchParams.get('limit')).toBe('10');
-    expect(url.searchParams.get('fetch_realtime')).toBe('true');
-  });
+  it.each(['DE', 'CH', 'AT', 'GB'] as const)(
+    'encodes autocomplete country %s',
+    async (country) => {
+      const { client, fetchSpy } = clientWith(() => jsonResponse(200, { data: [] }));
+      await client.autocomplete('siemens', { country, limit: 10, fetchRealtime: true });
+      const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+      expect(url.pathname).toBe('/v1/companies/autocomplete');
+      expect(url.searchParams.get('q')).toBe('siemens');
+      expect(url.searchParams.get('country')).toBe(country);
+      expect(url.searchParams.get('limit')).toBe('10');
+      expect(url.searchParams.get('fetch_realtime')).toBe('true');
+    },
+  );
 
   it('omits autocomplete country by default', async () => {
     const { client, fetchSpy } = clientWith(() => jsonResponse(200, { data: [] }));
@@ -478,6 +481,16 @@ describe('document lists', () => {
     expect(init.method).toBe('GET');
     expect(init.headers).toMatchObject({ Authorization: 'Bearer k' });
     expect(result).toEqual(body);
+  });
+
+  it('types the UK catalog coverage with its Companies House link', () => {
+    const coverage: CompanyDocumentList['coverage'] = {
+      object: 'documents_coverage',
+      status: 'not_applicable',
+      external_url:
+        'https://find-and-update.company-information.service.gov.uk/company/00000006/filing-history',
+    };
+    expect(coverage.external_url).toContain('company-information');
   });
 
   it('returns an empty Swiss catalog with coverage and freshness', async () => {

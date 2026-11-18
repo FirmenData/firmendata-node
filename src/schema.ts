@@ -4,6 +4,32 @@
  */
 
 export interface paths {
+    "/v1/account/credits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get your credit balance
+         * @description Credits left on the account that owns the bearer token, split into the
+         *     free monthly allowance (expires at `next_free_reset`) and purchased credits
+         *     (never expire). Debits spend the free monthly credits first.
+         *
+         *     **Free:** this call costs 0 credits and works with a balance of 0. Every
+         *     other response also reports what it cost in the `X-Credits-Charged` header,
+         *     so a client can track its spend without polling this endpoint.
+         */
+        get: operations["get_credit_balance_v1_account_credits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/companies/autocomplete": {
         parameters: {
             query?: never;
@@ -42,7 +68,7 @@ export interface paths {
         };
         /**
          * Advanced search
-         * @description Full-text + filter search over German, Swiss and Austrian commercial registers. Cursor-paginated,
+         * @description Full-text + filter search over German, Swiss and Austrian commercial registers and the UK Companies House register. Cursor-paginated,
          *     up to 50 hits per page. `total_approx` caps at 10,000 — tighten filters for an
          *     exact count.
          *
@@ -59,7 +85,9 @@ export interface paths {
          *     Setting `fetch_realtime=true` additionally searches the German registers live
          *     for `q` (or `company_name`, one of which is then required) and appends any
          *     companies not yet known to firmendata to the first page, carrying identity and
-         *     seat only. First page only — omit `cursor`.
+         *     seat only. First page only — omit `cursor`. Not run when `country` is set to a
+         *     country other than `DE` (GB, CH, AT): the response is then the local result,
+         *     with `freshness.realtime_fetching_status=realtime_fetching_disabled`.
          *
          *
          *     ## Pricing
@@ -135,7 +163,8 @@ export interface paths {
          *     When the registries are unreachable or the company is no longer listed,
          *     the response serves the stored catalog with the outcome in `freshness`.
          *     Unreachable-registry, unavailable-company and empty answers are not billed.
-         *     Swiss and Austrian companies return an empty list with `coverage.status=not_applicable`.
+         *     Swiss, Austrian and UK companies return an empty list with `coverage.status=not_applicable`;
+         *     for UK companies `coverage.external_url` links to the filing history at Companies House.
          *     This endpoint accepts no `fetch_realtime` parameter.
          *
          *
@@ -327,17 +356,18 @@ export interface paths {
          *     detail.
          *
          *     - **`fetch_realtime`** — optional. When `true`, refresh the
-         *       underlying register history from the German registries before
-         *       responding. Adds upstream latency (typically several seconds).
+         *       underlying register history from the German registries (or, for a UK
+         *       company, its status from Companies House) before responding. Adds upstream latency (typically several seconds).
          *       Failures are surfaced via `freshness.realtime_fetching_status`; the response
          *       still falls back to the most recent available data when a refresh
          *       fails.
          *
          *     `coverage.status` is `not_available` when no chronological extract exists
-         *     for the company — the Swiss commercial register publishes none, Austrian
+         *     for the company — the Swiss commercial register and Companies House publish none, Austrian
          *     history is not available yet, and some German entries have not been
          *     retrieved yet. Such responses are not charged;
-         *     Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB).
+         *     Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB),
+         *     and UK companies theirs from Companies House.
          *     A 404 means the company itself is unknown.
          *     The same data backs the `history` webhook subscription type, so the
          *     shape returned here is exactly the shape downstream consumers fetch
@@ -492,6 +522,9 @@ export interface paths {
          *       `effective_share_percent` sums those lower bounds over the branches into
          *       the root and is `0` when none carries a share band — so for GB it can be
          *       25 or below, and the person is still a beneficial owner.
+         *     - `fetch_realtime=true` refreshes the root company from Companies House and
+         *       is billed at the realtime price; `freshness.last_checked_at` is that refresh
+         *       when the chain holds no other company, otherwise the newest PSC snapshot.
          *     - Persons carry the year of birth only (`YYYY-01-01`); Companies House
          *       publishes month and year. No address is published.
          *     - `partial` names what the chain could not show: organisations we cannot
@@ -500,8 +533,6 @@ export interface paths {
          *       but is not identified" statements. A company exempt from keeping a PSC
          *       register (shares on a regulated market) is `not_applicable`; one that
          *       states nobody has significant control is `available` with no owners.
-         *     - `fetch_realtime` does not apply; `freshness.last_checked_at` is when the
-         *       newest daily Companies House PSC snapshot was applied.
          *
          *     Designed for KYC workflows where the freshest possible chain matters.
          *
@@ -670,8 +701,39 @@ export interface paths {
         /**
          * Create subscription
          * @description Create a webhook, email, or async (poll-only) subscription for a single
-         *     German (DE) company. Subscriptions are currently available for German
-         *     companies only.
+         *     company. German (DE) companies support every `subscription_type`;
+         *     Austrian (AT), Swiss (CH) and UK (GB) companies support the types their
+         *     register has data for (a 422 names the reason otherwise):
+         *
+         *     | type | DE | AT | CH | GB |
+         *     |---|---|---|---|---|
+         *     | `details` | ✓ | ✓ | ✓ | ✓ |
+         *     | `history` | ✓ | ✓ ¹ | ✓ ¹ | ✓ ¹ |
+         *     | `shareholders` | ✓ | – | ✓ GmbH / Sàrl / Sagl | – ² |
+         *     | `ubo` | ✓ | – | – | ✓ PSC |
+         *     | `doc_*` | ✓ | – | – | – |
+         *
+         *     ¹ Outside Germany `history` carries the legal-status timeline (insolvency,
+         *     liquidation, dissolution); fires when a new legal-status event appears.
+         *     ² UK owners are the persons with significant control: subscribe to `ubo`.
+         *
+         *     What counts as a change, by country:
+         *
+         *     * **DE** — a newer Handelsregister entry / document publish date; every
+         *       check reads the register live.
+         *     * **AT / CH** — a newer last register entry (Firmenbuch entry, Swiss
+         *       Official Gazette of Commerce publication) in the register data
+         *       firmendata keeps current; Swiss `shareholders` fires on a newer
+         *       replayed publication. No live fetch: `freshness` shows when the data
+         *       was last loaded.
+         *     * **GB** — every check re-reads the company from Companies House.
+         *       `details` fires on a newer Companies House filing (any category:
+         *       officers, address, name, PSC, accounts, confirmation statement,
+         *       Gazette notices); `ubo` on a newer PSC notification or cessation
+         *       anywhere in the UK ownership chain.
+         *
+         *     `publish_date` is a date: several changes on one day are one
+         *     notification.
          *
          *     ## Async (poll-only) subscriptions
          *
@@ -1089,13 +1151,13 @@ export interface components {
             city?: string | null;
             /**
              * Country Code
-             * @description ISO 3166-1 alpha-2 country code of the address: `DE`, `CH` or `AT`.
+             * @description ISO 3166-1 alpha-2 country code of the address: `DE`, `CH`, `AT` or `GB`.
              * @default DE
              */
             country_code: string;
             /**
              * Federal State
-             * @description State the address lies in: the Bundesland for a German address, the canton (official name, e.g. `Zug`, `Genève`) for a Swiss one, the Bundesland (e.g. `Salzburg`) for an Austrian one. Read from the address itself, so it can differ from the canton of a Swiss company's register office (`register_canton`). `null` when the address does not determine it.
+             * @description State the address lies in: the Bundesland for a German address, the canton (official name, e.g. `Zug`, `Genève`) for a Swiss one, the Bundesland (e.g. `Salzburg`) for an Austrian one, the ONS region or nation (e.g. `London`, `Scotland`) for a UK one. Read from the address itself, so it can differ from the canton of a Swiss company's register office (`register_canton`). `null` when the address does not determine it.
              */
             federal_state?: string | null;
             /**
@@ -1267,18 +1329,18 @@ export interface components {
             object: "autocomplete_hit";
             /**
              * Register Canton
-             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German and Austrian companies.
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for every other country.
              * @example VD
              */
             register_canton?: string | null;
             /**
              * Register Court
-             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
+             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; the jurisdiction (England and Wales, Scotland or Northern Ireland) for UK companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
              * Register Number
-             * @description Register entry number (digits only). Combine with `register_type` for a full reference.
+             * @description Register entry number (digits only). Combine with `register_type` for a full reference. `null` for UK companies (their company number is in `eu_id`).
              * @example 12345
              */
             register_number?: number | null;
@@ -1295,7 +1357,7 @@ export interface components {
             registered_seat?: string | null;
             /**
              * Uid
-             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German and Austrian companies.
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for every other country.
              * @example CHE-105.909.036
              */
             uid?: string | null;
@@ -1848,9 +1910,14 @@ export interface components {
             financial_summary?: components["schemas"]["FinancialSummaryBlock"] | null;
             /**
              * First Register Entry At
-             * @description Date of the company's first observable register entry. A date of 1 January usually means the register states only the year.
+             * @description Date of the current register entry: registered here since. A date of 1 January usually means the register states only the year.
              */
             first_register_entry_at?: string | null;
+            /**
+             * Founded At
+             * @description Company founding date used in search; unknown original dates of continuing entities are null.
+             */
+            founded_at?: string | null;
             /** @description Founder, family-involvement and succession assessment derived from the register's board history. `null` when the company could not be assessed at all. */
             founder_profile?: components["schemas"]["FounderProfileBlock"] | null;
             /**
@@ -1913,22 +1980,22 @@ export interface components {
              * @constant
              */
             object: "company";
-            /** @description The register entry this company's entry continues, when the register records one (seat move to another court district or transfer to another court). `null` when none is recorded. */
+            /** @description The register entry this company's entry continues, when the register records one (seat move, court transfer, change of legal form or continuing merger). `null` when none is recorded. */
             previous_registration?: components["schemas"]["PreviousRegistration"] | null;
             /**
              * Register Canton
-             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German and Austrian companies.
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for every other country.
              * @example VD
              */
             register_canton?: string | null;
             /**
              * Register Court
-             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
+             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; the jurisdiction (England and Wales, Scotland or Northern Ireland) for UK companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
              * Register Number
-             * @description Register entry number (digits only). Combine with `register_type` for a full reference.
+             * @description Register entry number (digits only). Combine with `register_type` for a full reference. `null` for UK companies (their company number is in `eu_id`).
              * @example 12345
              */
             register_number?: number | null;
@@ -1946,7 +2013,7 @@ export interface components {
             share_capital?: components["schemas"]["Money"] | null;
             /**
              * Uid
-             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German and Austrian companies.
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for every other country.
              * @example CHE-105.909.036
              */
             uid?: string | null;
@@ -2304,13 +2371,13 @@ export interface components {
             legal_forms?: components["schemas"]["LegalFormEntry"][];
             /**
              * Legal Status
-             * @description Current legal status derived from the timeline (`active`, `dissolved`, `in_liquidation`, `insolvent`). `null` when the German register history is not available. Swiss companies still receive their legal status from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices.
+             * @description Current legal status derived from the timeline (`active`, `dissolved`, `in_liquidation`, `insolvent`). `null` when the German register history is not available. Swiss companies still receive their legal status from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices, and UK companies theirs from Companies House.
              * @example active
              */
             legal_status?: string | null;
             /**
              * Legal Status Events
-             * @description Insolvency, Auflösung and Liquidation events, newest first, merged and deduplicated across the source registries. Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices when register history is not available. Empty for a company that has never been in insolvency or liquidation.
+             * @description Insolvency, Auflösung and Liquidation events, newest first, merged and deduplicated across the source registries. UK companies carry Companies House's status; Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) bankruptcy and Nachlass notices when register history is not available. Empty for a company that has never been in insolvency or liquidation.
              */
             legal_status_events?: components["schemas"]["LegalStatusEvent"][];
             /**
@@ -2459,6 +2526,18 @@ export interface components {
             pagination?: components["schemas"]["PaginationInfo"];
         };
         /**
+         * CompanyNameMatch
+         * @description How `company_name` is matched.
+         *
+         *     - `words` (default) — the name starts with the query, or contains every
+         *       query word anywhere.
+         *     - `prefix` — the name starts with the query, nothing else.
+         *
+         *     Both ignore case, accents and legal-form suffixes.
+         * @enum {string}
+         */
+        CompanyNameMatch: "words" | "prefix";
+        /**
          * CompanySize
          * @description Statutory size class under § 267 / § 267a HGB, read from the filing.
          *
@@ -2520,6 +2599,55 @@ export interface components {
          * @enum {string}
          */
         Country: "DE" | "CH" | "AT" | "GB";
+        /**
+         * CreditBalance
+         * @description Credits left on the account that owns the bearer token.
+         */
+        CreditBalance: {
+            /**
+             * Balance
+             * @description Credits you can spend now: `free_monthly` + `purchased`. A call that costs more than this is rejected with `402`.
+             * @example 1250
+             */
+            balance: number;
+            /**
+             * Free Monthly
+             * @description Free monthly credits left inside `balance`. Spent first; whatever is left expires at `next_free_reset`.
+             * @example 250
+             */
+            free_monthly: number;
+            /**
+             * Free Monthly Allowance
+             * @description What `free_monthly` is reset to at `next_free_reset`. `0` when the account receives no free monthly credits.
+             * @example 800
+             */
+            free_monthly_allowance: number;
+            /**
+             * Next Free Reset
+             * @description When the free monthly credits are next reset (00:00 Europe/Berlin on the 1st of the month). `null` when the account receives no free monthly credits.
+             * @example 2026-12-01T00:00:00+01:00
+             */
+            next_free_reset?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `credit_balance`.
+             * @default credit_balance
+             * @constant
+             */
+            object: "credit_balance";
+            /**
+             * Purchased
+             * @description Purchased (top-up) and granted credits inside `balance`. They never expire.
+             * @example 1000
+             */
+            purchased: number;
+            /**
+             * Spent Last 7 Days
+             * @description Credits your API calls spent in the last 7 days, to forecast how long `balance` lasts.
+             * @example 340
+             */
+            spent_last_7_days: number;
+        };
         /** DocumentsCoverage */
         DocumentsCoverage: {
             /**
@@ -2541,7 +2669,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description `available` for companies in the German registers; `not_applicable` for the Swiss commercial register, which publishes no document downloads, and for the Austrian Firmenbuch. An available catalog may be empty.
+             * @description `available` for companies in the German registers; `not_applicable` for the Swiss commercial register, which publishes no document downloads, for the Austrian Firmenbuch, and for UK companies (see `external_url` for their Companies House filing history). An available catalog may be empty.
              * @enum {string}
              */
             status: "available" | "not_applicable";
@@ -3241,7 +3369,7 @@ export interface components {
         Freshness: {
             /**
              * Last Checked At
-             * @description Timestamp (UTC) of the last successful refresh of the underlying data slice from the German registries. Compare against your own staleness tolerance to decide whether to re-issue the call with `fetch_realtime=true`. `null` when the slice has never been successfully fetched for this company.
+             * @description Timestamp (UTC) of the last successful refresh of the underlying data slice from the register. Compare against your own staleness tolerance to decide whether to re-issue the call with `fetch_realtime=true`. `null` when the slice has never been successfully fetched for this company.
              * @example 2026-04-30T12:14:08Z
              */
             last_checked_at?: string | null;
@@ -3254,7 +3382,7 @@ export interface components {
             object: "freshness";
             /**
              * Realtime Fetching Status
-             * @description Outcome of the realtime fetch attempt for this request (`fetch_realtime=true`). `realtime_fetching_disabled` when the parameter was not set; `success` when fresh data was merged into the response; otherwise the response falls back to the cached read and this field reports why.
+             * @description Outcome of the realtime fetch attempt for this request (`fetch_realtime=true`). `realtime_fetching_disabled` when the parameter was not set (the default: a cached read) or does not apply to this company's country or this endpoint; `success` when fresh data was merged into the response; otherwise the response falls back to the cached read and this field reports why.
              * @enum {string}
              */
             realtime_fetching_status: "success" | "platform_unavailable" | "documents_temporarily_unavailable" | "file_unavailable" | "company_unavailable" | "realtime_fetching_disabled";
@@ -3366,7 +3494,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description `available`: the chronological register history is available and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register publishes none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB).
+             * @description `available`: the chronological register history is available and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register and Companies House publish none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies and UK companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) and Companies House respectively.
              * @enum {string}
              */
             status: "available" | "not_available";
@@ -4160,15 +4288,25 @@ export interface components {
             eu_id?: string | null;
             /**
              * Kind
-             * @description `seat_move`: the company moved its registered seat into another court's district and got a new register entry; `court_change`: the register entry was transferred to another court without a stated seat move.
+             * @description `seat_move`: the company moved its registered seat into another court's district and got a new register entry; `court_change`: the register entry was transferred to another court without a stated seat move; `formwechsel`: the company continued under another legal form; `merger_continuity`: the company continued as the absorbing entity in a merger.
              * @enum {string}
              */
-            kind: "seat_move" | "court_change";
+            kind: "seat_move" | "court_change" | "formwechsel" | "merger_continuity";
+            /**
+             * Name
+             * @description Name of the predecessor recorded in the register.
+             */
+            name?: string | null;
             /**
              * Original First Register Entry At
              * @description First register entry of the earliest predecessor we could trace (up to five earlier entries). `first_register_entry_at` stays the date of the current entry.
              */
             original_first_register_entry_at?: string | null;
+            /**
+             * Original Founded At
+             * @description Founding date of the earliest predecessor we could trace; the company's search founding date uses it.
+             */
+            original_founded_at?: string | null;
             /**
              * Register Court
              * @description Court that kept the previous register entry.
@@ -4453,18 +4591,18 @@ export interface components {
             profit_year?: number | null;
             /**
              * Register Canton
-             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for German and Austrian companies.
+             * @description Swiss companies only: two-letter code of the canton whose commercial register keeps the entry (e.g. `VD`). `null` for every other country.
              * @example VD
              */
             register_canton?: string | null;
             /**
              * Register Court
-             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
+             * @description Registering court (Registergericht, Firmenbuchgericht) for German and Austrian companies; the jurisdiction (England and Wales, Scotland or Northern Ireland) for UK companies; for Swiss companies, the full name of the canton whose register office keeps the entry (e.g. `Vaud`).
              */
             register_court?: string | null;
             /**
              * Register Number
-             * @description Register entry number (digits only). Combine with `register_type` for a full reference.
+             * @description Register entry number (digits only). Combine with `register_type` for a full reference. `null` for UK companies (their company number is in `eu_id`).
              * @example 12345
              */
             register_number?: number | null;
@@ -4500,7 +4638,7 @@ export interface components {
             total_assets_year?: number | null;
             /**
              * Uid
-             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for German and Austrian companies.
+             * @description Swiss companies only: the Unternehmens-Identifikationsnummer in its official format. `null` for every other country.
              * @example CHE-105.909.036
              */
             uid?: string | null;
@@ -4827,8 +4965,8 @@ export interface components {
              *
              *     - `recurring` — the **first** delivery is a snapshot of the current state. After that, you only get a notification when there is an actual update.
              *     - `one_time` — keep polling at the configured `cadence` *until* the first successful delivery, then stop. Useful when:
-             *       - the document you're waiting for is not yet available on Handelsregister (e.g. a Gesellschafterliste not yet filed, a Bilanz not yet published in Bundesanzeiger),
-             *       - or Handelsregister is currently failing to serve the file due to a technical issue on their end (transient 5xx, anti-bot blocks) and you want firmendata to keep retrying on your behalf without you having to call the API on a schedule.
+             *       - the document you're waiting for is not yet available on the register (e.g. a Gesellschafterliste not yet filed on Handelsregister),
+             *       - or the register is currently failing to serve the file due to a technical issue on their end (transient 5xx, anti-bot blocks) and you want firmendata to keep retrying on your behalf without you having to call the API on a schedule.
              *       The subscription stays in place after the first successful delivery as a record — `DELETE` it when you're done.
              * @default recurring
              */
@@ -4852,7 +4990,7 @@ export interface components {
              * @description Optional terminal date. After this calendar day the subscription stops checking for updates. **Default: `null`** — open-ended subscription.
              */
             subscription_end_date?: string | null;
-            /** @description Which slice of company data to track. See the `SubscriptionType` schema for the per-value coverage table — `shareholders` works for every GmbH/UG (it auto-falls-back to Musterprotokoll when no Liste is filed), while `doc_articles_of_association` does not — pick `doc_model_protocol` for the founding deed of simplified-procedure companies. */
+            /** @description Which slice of company data to track. Not every type is available for every country (422 otherwise): German companies support all types; AT `details`/`history`; CH `details`/`history`/`shareholders` (GmbH only); GB `details`/`history`/`ubo`. See the `SubscriptionType` schema for the per-value coverage table — `shareholders` works for every GmbH/UG (it auto-falls-back to Musterprotokoll when no Liste is filed), while `doc_articles_of_association` does not — pick `doc_model_protocol` for the founding deed of simplified-procedure companies. */
             subscription_type: components["schemas"]["SubscriptionType"];
             /**
              * Webhook Url
@@ -5384,14 +5522,15 @@ export interface components {
          *     - `shareholders` **auto-falls-back** to the Musterprotokoll when no Liste der Gesellschafter is filed — pick this for cap-table tracking regardless of legal form.
          *     - `doc_articles_of_association` does **not** fall back — pick `doc_model_protocol` when you need the founding deed of a simplified-procedure company.
          *     - `doc_shareholder_list` does **not** fall back — pick `doc_model_protocol` for Musterprotokoll-only companies, or `shareholders` for parsed cap-table data that works for any GmbH/UG.
+         *     - `doc_*` subscriptions follow German register documents and are available for German (DE) companies only.
          *     - `doc_*` subscriptions only fire for companies that actually filed the matching document; mismatches return `scrape_failed_file_not_found` until the document appears (use `mode=one_time` if you're waiting for a one-off filing).
          *
          *     | Value | What it tracks |
          *     |---|---|
-         *     | `details` | Current company snapshot — identity, registered address, current board, share capital, and lifecycle status. The webhook body's `data.links.company_detail` resolves to `GET /v1/companies/{eu_id}` for the full parsed JSON. Available for every Handelsregister-registered company. |
-         *     | `history` | Chronological register history — every recorded change to company name (firma), seat (Sitz), capital, board, business purpose, etc. The webhook body's `data.links.company_history` resolves to `GET /v1/companies/{eu_id}/history` for the full parsed timeline. Available for every Handelsregister-registered company. |
-         *     | `shareholders` | Cap table — primarily from the **Liste der Gesellschafter** (list of shareholders), filed by GmbH and UG (haftungsbeschränkt). **Auto-fallback to Musterprotokoll:** companies founded via the simplified procedure under §2 Abs. 1a GmbHG do not file a separate Liste — their **Musterprotokoll** (model protocol) names the founders and their share allocations directly. firmendata handles this transparently: when no Liste has been filed, the `shareholders` subscription derives the cap table from the Musterprotokoll instead. So `shareholders` is the right subscription for cap-table updates regardless of which document the company filed. The webhook body links to `GET /v1/companies/{eu_id}/shareholders` for the parsed cap table. |
-         *     | `ubo` | Beneficial owners (**wirtschaftlich Berechtigte**) — natural persons who ultimately own or control the company, derived by walking the Gesellschafter graph. Each dispatch refreshes the cap-table document for **every** German GmbH/UG in the ownership chain (root and parents), not just the root, and fires when **any** chain member's Liste der Gesellschafter (or Musterprotokoll fallback) gets a newer publish date. The webhook body carries the full UBO report (graph, `beneficial_owners`, `potential_beneficial_owners`, `coverage` with `reason`) plus a per-node `chain` breakdown (`eu_id`, `depth`, refresh `status`, latest `publish_date`).  `coverage.status="partial"` means one or more unresolved branches carry effective share above 25 % at the root and could hide a UBO — `potential_beneficial_owners` lists those entities (foreign holdings, unlisted parents, depth-capped branches) with their summed effective share so KYC consumers can decide whether to escalate. `coverage.status="available"` with `has_unresolved_branches=true` means unresolved branches exist but are immaterial (combined share below the threshold or isolated by sub-threshold control links).  Transient per-node failures (e.g. `documents_temporarily_unavailable`, `platform_unavailable`) delay notification until the next successful check; the next cadence retries. Other per-node outcomes (e.g. `file_unavailable`, `skipped_not_applicable` for non-GmbH chain members) are surfaced in the chain breakdown but do **not** block delivery — the rest of the chain still ships. |
+         *     | `details` | Current company snapshot — identity, registered address, current board, share capital, and lifecycle status. The webhook body's `data.links.company_detail` resolves to `GET /v1/companies/{eu_id}` for the full parsed JSON. Available for German (DE), Austrian (AT), Swiss (CH) and UK (GB) companies. DE fires on a newer Handelsregister entry, AT/CH on a newer last register entry in the register data firmendata keeps current, GB on a newer Companies House filing of any category. |
+         *     | `history` | Chronological register history — every recorded change to company name (firma), seat (Sitz), capital, board, business purpose, etc. The webhook body's `data.links.company_history` resolves to `GET /v1/companies/{eu_id}/history` for the full parsed timeline. Available for every Handelsregister-registered company. For Austrian (AT), Swiss (CH) and UK (GB) companies the history is the legal-status timeline only (insolvency, liquidation, dissolution), and the subscription fires on a new legal-status event. |
+         *     | `shareholders` | Cap table — primarily from the **Liste der Gesellschafter** (list of shareholders), filed by GmbH and UG (haftungsbeschränkt). **Auto-fallback to Musterprotokoll:** companies founded via the simplified procedure under §2 Abs. 1a GmbHG do not file a separate Liste — their **Musterprotokoll** (model protocol) names the founders and their share allocations directly. firmendata handles this transparently: when no Liste has been filed, the `shareholders` subscription derives the cap table from the Musterprotokoll instead. So `shareholders` is the right subscription for cap-table updates regardless of which document the company filed. The webhook body links to `GET /v1/companies/{eu_id}/shareholders` for the parsed cap table. Also available for Swiss (CH) GmbH / Sàrl / Sagl companies, whose cap table is replayed from Swiss Official Gazette of Commerce publications (fires on a newer replayed publication). Not available for AT or GB (UK owners: `ubo`). |
+         *     | `ubo` | Beneficial owners (**wirtschaftlich Berechtigte**) — natural persons who ultimately own or control the company, derived by walking the Gesellschafter graph. Each dispatch refreshes the cap-table document for **every** German GmbH/UG in the ownership chain (root and parents), not just the root, and fires when **any** chain member's Liste der Gesellschafter (or Musterprotokoll fallback) gets a newer publish date. The webhook body carries the full UBO report (graph, `beneficial_owners`, `potential_beneficial_owners`, `coverage` with `reason`) plus a per-node `chain` breakdown (`eu_id`, `depth`, refresh `status`, latest `publish_date`).  `coverage.status="partial"` means one or more unresolved branches carry effective share above 25 % at the root and could hide a UBO — `potential_beneficial_owners` lists those entities (foreign holdings, unlisted parents, depth-capped branches) with their summed effective share so KYC consumers can decide whether to escalate. `coverage.status="available"` with `has_unresolved_branches=true` means unresolved branches exist but are immaterial (combined share below the threshold or isolated by sub-threshold control links).  Transient per-node failures (e.g. `documents_temporarily_unavailable`, `platform_unavailable`) delay notification until the next successful check; the next cadence retries. Other per-node outcomes (e.g. `file_unavailable`, `skipped_not_applicable` for non-GmbH chain members) are surfaced in the chain breakdown but do **not** block delivery — the rest of the chain still ships.  **UK (GB) companies:** the owners are the persons with significant control (PSC). Each dispatch re-reads the company from Companies House and fires on a newer PSC notification, cessation or change anywhere in the UK ownership chain; the body carries the UBO report and `max_publish_date` (no `chain` breakdown). Not available for AT or CH. |
          *     | `doc_articles_of_association` | **Articles of association** document — Germany's constitutional company document, called **Gesellschaftsvertrag** (GmbH, KG, OHG, GbR), **Satzung** (AG, KGaA, eG, Verein), or **Statut** (some specific forms) depending on legal form. Each is the constitutional document for its legal form.  Webhook body's `data.download.url` is a 7-day presigned URL to the PDF — the customer can fetch the file directly without a follow-up API call. After the URL expires, `GET /v1/companies/{eu_id}/documents/download?file_type=articles_of_association` mints a fresh one.  **Not all companies have one.** Companies founded via the simplified procedure under §2 Abs. 1a GmbHG file a **Musterprotokoll** in its place — subscribe to `doc_model_protocol` for those. |
          *     | `doc_company_registration` | **Initial company registration filing (Anmeldung zur Eintragung)** — the notarial document submitted to register the company. Webhook body carries a 7-day presigned download URL (`data.download.url`). Available for any newly-registered company; fires when a new Anmeldung is filed. |
          *     | `doc_model_protocol` | **Model protocol document (Musterprotokoll)** — the simplified notarial founding deed for small GmbH and UG (haftungsbeschränkt) companies under §2 Abs. 1a GmbHG. Legally substitutes for **both** the Articles of Association and the Liste der Gesellschafter for these companies. The Musterprotokoll itself names the founders, their share allocations, and the basic company terms in a single document.  Webhook body carries a 7-day presigned download URL (`data.download.url`). Only companies founded via the simplified procedure have one; for everyone else this subscription reports `scrape_failed_file_not_found`. For **cap-table changes** — regardless of which document was filed — subscribe to `shareholders` instead (it auto-falls-back to the Musterprotokoll when no Liste has been filed). |
@@ -5726,7 +5865,7 @@ export interface components {
             section?: string | null;
             /**
              * Source Classification
-             * @description Classification version the code was originally recorded in, when different from canonical WZ 2025: WZ 2008, NACE Rev. 2, NACE Rev. 2.1 or ÖNACE 2025, Austria's official national version of NACE Rev. 2.1, for Austrian companies.
+             * @description Classification version the code was originally recorded in, when different from canonical WZ 2025: WZ 2008, NACE Rev. 2, NACE Rev. 2.1 or ÖNACE 2025, Austria's official national version of NACE Rev. 2.1, for Austrian companies; or UK SIC 2007, the company's own declaration, for UK companies (published as declared; `source_title` is null for it).
              */
             source_classification?: ("wz_2008" | "nace_rev_2" | "nace_rev_2_1" | "oenace_2025" | "uk_sic_2007") | null;
             /**
@@ -5749,6 +5888,96 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_credit_balance_v1_account_credits_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's current credit balance. */
+            200: {
+                headers: {
+                    /** @description Credits this call deducted from your balance. `0` for free endpoints and for responses that carry no data. */
+                    "X-Credits-Charged"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditBalance"];
+                };
+            };
+            /** @description Missing, invalid, revoked, or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "A valid `Authorization: Bearer <token>` header is required.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "A valid `Authorization: Bearer <token>` header is required.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 401,
+                     *       "title": "Authentication required.",
+                     *       "type": "https://api.firmendata.com/problems/unauthenticated"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded. Rejected requests do not consume the limit or any credits. Honour `Retry-After` (seconds) before retrying. */
+            429: {
+                headers: {
+                    /** @description Numeric limit of the tighter window currently applying. */
+                    "RateLimit-Limit"?: number;
+                    /** @description Requests left in that window (0 on 429). */
+                    "RateLimit-Remaining"?: number;
+                    /** @description Seconds until the window resets. */
+                    "RateLimit-Reset"?: number;
+                    /** @description Seconds to wait before the next request will succeed. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
+                     *       "instance": "/v1/companies/autocomplete",
+                     *       "message": "Rate limit exceeded: more than 5 requests per 1 second. Retry in 1s.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 429,
+                     *       "title": "Too many requests.",
+                     *       "type": "https://api.firmendata.com/problems/rate-limit-exceeded"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
+                     *       "instance": "/v1/companies/DEF1103R.HRB279792B",
+                     *       "message": "An unexpected error occurred. Please retry later or contact support with the `request_id`.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 500,
+                     *       "title": "Internal server error.",
+                     *       "type": "https://api.firmendata.com/problems/server-error"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     autocompleteCompanies: {
         parameters: {
             query: {
@@ -5756,9 +5985,9 @@ export interface operations {
                 q: string;
                 /** @description Maximum number of suggestions to return. Hard upper bound is 25. */
                 limit?: number;
-                /** @description Restrict all suggestions to the company register: DE, CH or AT. Case-insensitive; omitted searches all countries. */
+                /** @description Restrict all suggestions to the company register: DE, CH, AT or GB. Case-insensitive; omitted searches all countries. */
                 country?: ("DE" | "CH" | "AT" | "GB") | null;
-                /** @description When `true`, search the German company registers live for the keyword and include any companies not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Adds upstream latency (typically a few seconds) and a higher credit cost. Refresh failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
+                /** @description When `true`, search the German company registers live for the keyword and include any companies not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Not run when `country` is set to a country other than DE. Adds upstream latency (typically a few seconds) and a higher credit cost. Refresh failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -5886,10 +6115,12 @@ export interface operations {
     searchCompanies: {
         parameters: {
             query?: {
-                /** @description Unified keyword, tried as an eu_id, then a company-name prefix, then a person name — falling through whenever a phase returns nothing. Overrides `company_name`, `eu_id` and `person_name` when supplied alongside them. */
+                /** @description Unified keyword, tried as an eu_id, then as a company name (matched like `company_name`), then a person name — falling through whenever a phase returns nothing; when even the person reading finds nothing, looser name rewrites are tried (city or bracketed text dropped, compound words joined, close spellings). `company_name` never loosens like this. Overrides `company_name`, `eu_id` and `person_name` when supplied alongside them. */
                 q?: string | null;
-                /** @description Company name prefix, ignoring case, accents, quotes and invisible characters — `Müller "Süd" GmbH` and `Müller Süd GmbH` match the same company. The legal-form suffix is kept, so `Bosch GmbH` narrows against `Bosch`. */
+                /** @description Company name, matched by words and ranked by relevance, not a pure prefix filter. A company matches when its name starts with the query or contains every query word anywhere (`bosch` finds `Robert Bosch GmbH`). Legal forms in the query (`GmbH`, `AG`, `Aktiengesellschaft`, `Ltd`, …) are ignored for matching, so `Siemens AG` finds `Siemens Aktiengesellschaft`, and `Allianz Versicherungs-AG` also finds a name like `… Generalvertretung der Allianz Versicherungs AG`. Ranking puts exact names (the query plus at most a legal form) first, then names starting with the query, then word matches, weighted by company size. Case, accents, quotes, umlaut spellings (`ü`/`ue`) and invisible characters are ignored — `Müller "Süd" GmbH` and `Mueller Süd GmbH` match the same company. */
                 company_name?: string | null;
+                /** @description How `company_name` is matched; only valid together with `company_name` (not with `q`). `words` (default): the name starts with the query or contains every query word anywhere. `prefix`: the name starts with the query, nothing else. Both ignore case, accents and legal-form suffixes. */
+                company_name_match?: components["schemas"]["CompanyNameMatch"] | null;
                 /** @description Exact eu_id lookup (no prefix expansion). */
                 eu_id?: string | null;
                 /** @description Maximum number of hits to return per page. Hard upper bound is 50. */
@@ -6140,12 +6371,34 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Temporarily unavailable: the service is briefly overloaded and the query ran out of time. Not charged. Retry the same request (same `cursor`) after `Retry-After` seconds. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the same request. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "The search timed out because the service is busy right now. Retry the same request in 10 seconds.",
+                     *       "instance": "/v1/companies/search",
+                     *       "message": "The search timed out because the service is busy right now. Retry the same request in 10 seconds.",
+                     *       "request_id": "req_01HXYZABC123DEF456GHI789J",
+                     *       "status": 503,
+                     *       "title": "Service Unavailable.",
+                     *       "type": "https://api.firmendata.com/problems/service-unavailable"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getCompanyDetail: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the company's register snapshot from the German registries before building the response, so the underlying data is as fresh as possible. Adds upstream latency (typically several seconds). Refresh failures do not fail the request — the most recent available data is returned instead. The chronological register history is refreshed by `/v1/companies/{eu_id}/history` instead — this endpoint does not refresh it. */
+                /** @description Affects German (DE) and UK (GB) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the company's register snapshot from the German registries, or from Companies House for a UK (GB) company, before building the response, so the underlying data is as fresh as possible. Adds upstream latency (typically several seconds). Refresh failures do not fail the request — the most recent available data is returned instead. The chronological register history is refreshed by `/v1/companies/{eu_id}/history` instead — this endpoint does not refresh it. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -6468,7 +6721,7 @@ export interface operations {
                 file_id?: string | null;
                 /** @description Specific document version from the live document list. Cannot be combined with `file_id` or `fetch_realtime=true`. */
                 document_id?: string | null;
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, fetch the requested `file_type` from the German registries before resolving the file, so the presigned URL points at the freshest version. Adds upstream latency (typically several seconds). Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Only affects German (DE) companies; ignored for Swiss (CH), Austrian (AT) and UK (GB) companies, with no realtime surcharge. When `true`, fetch the requested `file_type` from the German registries before resolving the file, so the presigned URL points at the freshest version. Adds upstream latency (typically several seconds). Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -6799,7 +7052,7 @@ export interface operations {
     getCompanyHistory: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the chronological register history from the German registries before responding. Adds upstream latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Affects German (DE) and UK (GB) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refresh the chronological register history from the German registries, or a UK (GB) company's status from Companies House, before responding. Adds upstream latency (typically several seconds). Refresh failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;
@@ -7119,7 +7372,7 @@ export interface operations {
     getCompanyUbo: {
         parameters: {
             query?: {
-                /** @description Only affects German (DE) companies; ignored for Swiss (CH), Austrian (AT) and UK (GB) companies, with no realtime surcharge. When `true`, refetch the latest Liste der Gesellschafter for every German GmbH/UG visited in the ownership chain before building the graph. Adds noticeable latency. Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
+                /** @description Affects German (DE) and UK (GB) companies; ignored for Swiss (CH) and Austrian (AT) companies, with no realtime surcharge. When `true`, refetch the latest Liste der Gesellschafter for every German GmbH/UG visited in the ownership chain before building the graph; for a UK company, refresh the root company from Companies House (billed at the realtime price). Adds noticeable latency. Failures are surfaced via `freshness.realtime_fetching_status` rather than failing the request. */
                 fetch_realtime?: boolean;
             };
             header?: never;

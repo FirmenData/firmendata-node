@@ -1,7 +1,7 @@
 {
   "name": "firmendata",
   "version": "1.4.0",
-  "description": "Official TypeScript/JavaScript client for the firmendata API: German, Swiss and Austrian company data",
+  "description": "Official TypeScript/JavaScript client for the firmendata API: German, Swiss, Austrian and UK company data",
   "license": "MIT",
   "author": "FirmenData <info@firmendata.com>",
   "homepage": "https://firmendata.com",
@@ -17,6 +17,8 @@
     "germany",
     "switzerland",
     "austria",
+    "uk",
+    "companies-house",
     "company-data",
     "handelsregister",
     "unternehmensregister",
