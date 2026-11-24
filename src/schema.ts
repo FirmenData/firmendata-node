@@ -165,7 +165,8 @@ export interface paths {
          *     When the registries are unreachable or the company is no longer listed,
          *     the response serves the stored catalog with the outcome in `freshness`.
          *     Unreachable-registry, unavailable-company and empty answers are not billed.
-         *     Swiss, Austrian and UK companies return an empty list with `coverage.status=not_applicable`;
+         *     Swiss, Austrian, UK and Irish companies return an empty list with `coverage.status=not_applicable`
+         *     and the explanation in `coverage.reason`;
          *     for UK companies `coverage.external_url` links to the filing history at Companies House.
          *     This endpoint accepts no `fetch_realtime` parameter.
          *
@@ -301,6 +302,14 @@ export interface paths {
          *     company's headline: its own group statement for every year when it
          *     publishes one, else its single-entity statement — never a mix of both.
          *
+         *     ### Irish companies
+         *
+         *     The Irish Companies Registration Office (CRO) publishes no accounts figures
+         *     as open data, so an Irish (IE) company comes back without figures, with
+         *     `coverage` explaining why, and the call is not charged. The date its latest
+         *     accounts were made up to is in `ie_filing_status` on
+         *     `GET /v1/companies/{eu_id}`.
+         *
          *     ### Companies covered by a parent's group accounts
          *
          *     German subsidiaries may stop publishing their own annual accounts once a
@@ -365,11 +374,12 @@ export interface paths {
          *       fails.
          *
          *     `coverage.status` is `not_available` when no chronological extract exists
-         *     for the company — the Swiss commercial register and Companies House publish none, Austrian
+         *     for the company — the Swiss commercial register, Companies House and the Irish Companies
+         *     Registration Office (CRO) publish none, Austrian
          *     history is not available yet, and some German entries have not been
          *     retrieved yet. Such responses are not charged;
          *     Swiss companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB),
-         *     and UK companies theirs from Companies House.
+         *     UK companies theirs from Companies House, and Irish companies theirs from the CRO register.
          *     A 404 means the company itself is unknown.
          *     The same data backs the `history` webhook subscription type, so the
          *     shape returned here is exactly the shape downstream consumers fetch
@@ -412,6 +422,9 @@ export interface paths {
          *     **United Kingdom (GB):** always `not_applicable`. No UK register publishes a
          *     structured shareholder list; owners and controllers above 25 % are persons
          *     with significant control, returned by `GET /v1/companies/{eu_id}/ubo`.
+         *
+         *     **Ireland (IE):** always `not_applicable`, with `coverage.reason`: the
+         *     Companies Registration Office (CRO) publishes no shareholder list as open data.
          *
          *     A response without a cap table (`coverage.status` other than `available`)
          *     costs no credits.
@@ -507,6 +520,11 @@ export interface paths {
          *       30 %, Y holds 40 % of root → A's `effective_share_percent = 70`
          *       (each branch is independently a control link, and the root-edge
          *       shares add up).
+         *
+         *     **Ireland (IE):** always `not_applicable` with `coverage.reason`. Irish
+         *     beneficial owners are kept in the Register of Beneficial Ownership (RBO),
+         *     closed to general public access since the ruling of the Court of Justice of
+         *     the European Union of 22 November 2022.
          *
          *     **United Kingdom (GB):** the chain is read from the Companies House
          *     registers of persons with significant control (PSC), not from cap tables.
@@ -1317,10 +1335,10 @@ export interface components {
              * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT" | "GB";
+            country_code: "DE" | "CH" | "AT" | "GB" | "IE";
             /**
              * Display Name
-             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
+             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). UK (`GB`) names, which Companies House registers in upper case, come in readable case (`TESCO PLC` → `Tesco plc`, `ASTRAZENECA PLC` → `AstraZeneca plc`); `legal_name` keeps the register spelling. Identical for the same company on every endpoint.
              */
             display_name: string;
             /**
@@ -2101,20 +2119,25 @@ export interface components {
             charity?: components["schemas"]["CharityBlock"] | null;
             /**
              * Company Number
-             * @description UK Companies House company number (8 characters, leading zeros kept). Null outside the UK.
+             * @description UK Companies House company number (8 characters, leading zeros kept), or the Irish Companies Registration Office (CRO) company number (without leading zeros). Null elsewhere.
              */
             company_number?: string | null;
             /** @description Contact and web presence (domain, logo, social profiles). */
             contact: components["schemas"]["ContactBlock"];
             /**
              * Country Code
-             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register, `IE` for the Irish Companies Registration Office (CRO) register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT" | "GB";
+            country_code: "DE" | "CH" | "AT" | "GB" | "IE";
+            /**
+             * Data Coverage
+             * @description The data areas the company's register does not publish, each with the reason. Set for Irish (IE) companies, whose register publishes no directors, shareholders, beneficial owners, accounts figures, document copies or register history as open data; `null` for every other country.
+             */
+            data_coverage?: components["schemas"]["DataCoverageNote"][] | null;
             /**
              * Display Name
-             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
+             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). UK (`GB`) names, which Companies House registers in upper case, come in readable case (`TESCO PLC` → `Tesco plc`, `ASTRAZENECA PLC` → `AstraZeneca plc`); `legal_name` keeps the register spelling. Identical for the same company on every endpoint.
              */
             display_name: string;
             /**
@@ -2156,6 +2179,8 @@ export interface components {
             founding_document_date?: string | null;
             /** @description How current the register snapshot in this response is. `last_checked_at` is the timestamp at which the company's register profile was last successfully fetched; `realtime_fetching_status` reports the outcome of the realtime attempt for this request. The chronological register history has its own freshness object served by `/v1/companies/{eu_id}/history`. */
             freshness: components["schemas"]["Freshness"];
+            /** @description The company's filing facts on the Irish Companies Registration Office (CRO) register: status as stated, last annual return, next annual return date with an overdue flag, and the date the latest accounts were made up to, plus the link to the CRO's company search. `null` unless the company is an Irish (IE) company with register data on record. Source: Companies Registration Office (CRO); CC BY 4.0. */
+            ie_filing_status?: components["schemas"]["IeFilingStatusBlock"] | null;
             /** @description Industry classification (NACE codes). */
             industry_categorization: components["schemas"]["IndustryBlock"];
             /** @description Insolvency, Auflösung and Liquidation snapshot. `null` when the company has no such event on record and is not dissolved. */
@@ -2408,10 +2433,10 @@ export interface components {
         CompanyDocumentList: {
             /**
              * Country Code
-             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
+             * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register, `IE` for the Irish Companies Registration Office (CRO) register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT" | "GB";
+            country_code: "DE" | "CH" | "AT" | "GB" | "IE";
             /** @description Whether register document downloads apply to this company. */
             coverage: components["schemas"]["DocumentsCoverage"];
             /**
@@ -2515,6 +2540,8 @@ export interface components {
          *     items, employee time series, and parent/subsidiary references.
          */
         CompanyFinancials: {
+            /** @description Set when the company's register publishes no accounts figures (Irish (IE) companies), with the reason; the response then holds no figures and the call is not charged. `null` for every other country. */
+            coverage?: components["schemas"]["DataCoverageNote"] | null;
             /** @description Per-year employee headcount (total / full-time / part-time) sourced from annual Jahresabschluss filings. */
             employee_history: components["schemas"]["EmployeeHistoryBlock"];
             /**
@@ -2829,7 +2856,7 @@ export interface components {
          * Country
          * @enum {string}
          */
-        Country: "DE" | "CH" | "AT" | "GB";
+        Country: "DE" | "CH" | "AT" | "GB" | "IE";
         /**
          * CreditBalance
          * @description Credits left on the account that owns the bearer token.
@@ -2879,6 +2906,37 @@ export interface components {
              */
             spent_last_7_days: number;
         };
+        /**
+         * DataCoverageNote
+         * @description A data area the company's register does not publish, and why.
+         */
+        DataCoverageNote: {
+            /**
+             * Area
+             * @description The data area: `management` (the `management` list), `shareholders`, `ubo`, `financials`, `documents` and `history` (the endpoints of those names).
+             * @enum {string}
+             */
+            area: "management" | "shareholders" | "ubo" | "financials" | "documents" | "history";
+            /**
+             * Object
+             * @description Discriminator. Always `data_coverage_note`.
+             * @default data_coverage_note
+             * @constant
+             */
+            object: "data_coverage_note";
+            /**
+             * Reason
+             * @description Customer-safe explanation of why the data is not available.
+             */
+            reason: string;
+            /**
+             * Status
+             * @description Always `not_available`: the register does not publish it.
+             * @default not_available
+             * @constant
+             */
+            status: "not_available";
+        };
         /** DocumentsCoverage */
         DocumentsCoverage: {
             /**
@@ -2900,7 +2958,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description `available` for companies in the German registers; `not_applicable` for the Swiss commercial register, which publishes no document downloads, for the Austrian Firmenbuch, and for UK companies (see `external_url` for their Companies House filing history). An available catalog may be empty.
+             * @description `available` for companies in the German registers; `not_applicable` for the Swiss commercial register, which publishes no document downloads, for the Austrian Firmenbuch, for UK companies (see `external_url` for their Companies House filing history), and for Irish companies (the CRO sells copies of filed documents). An available catalog may be empty.
              * @enum {string}
              */
             status: "available" | "not_applicable";
@@ -2990,7 +3048,7 @@ export interface components {
              * Country
              * @enum {string}
              */
-            country: "DE" | "CH" | "AT" | "GB";
+            country: "DE" | "CH" | "AT" | "GB" | "IE";
             /** Eu Id */
             eu_id?: string | null;
             /** Legal Form */
@@ -3742,10 +3800,79 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description `available`: the chronological register history is available and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register and Companies House publish none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies and UK companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) and Companies House respectively.
+             * @description `available`: the chronological register history is available and the timelines below are populated. `not_available`: no extract exists for this company — the Swiss commercial register, Companies House and the Irish Companies Registration Office (CRO) publish none, Austrian history is not available yet, and for a German company none has been retrieved yet (`fetch_realtime=true` retrieves it). The register timelines are then empty and the call is not charged. Swiss companies and UK companies still receive their legal-status timeline from the Swiss Official Gazette of Commerce (SHAB) and Companies House respectively, and Irish companies theirs from the CRO register.
              * @enum {string}
              */
             status: "available" | "not_available";
+        };
+        /**
+         * IeFilingStatusBlock
+         * @description The company's filing facts on the Irish Companies Registration Office (CRO) register.
+         *
+         *     Present for Irish (IE) companies. Dates are as the register states them;
+         *     `annual_return_overdue` is evaluated on the day of the response. An
+         *     overdue annual return is a filing fact, not a strike-off: the CRO may later
+         *     list such a company for strike-off, and `register_status` then says so.
+         *     Source: Companies Registration Office (CRO); contains Irish Public Sector
+         *     Data licensed under a Creative Commons Attribution 4.0 International
+         *     (CC BY 4.0) licence.
+         */
+        IeFilingStatusBlock: {
+            /**
+             * Annual Return Overdue
+             * @description `true` when `next_annual_return_due` is before today and the company is not dissolved. `false` for a dissolved company. `null` when no date is known. Overdue does not mean struck off: see `register_status`.
+             */
+            annual_return_overdue?: boolean | null;
+            /**
+             * Company Number
+             * @description CRO company number, without leading zeros.
+             * @example 368047
+             */
+            company_number?: string | null;
+            /**
+             * Cro Search Url
+             * @description The CRO's public company search (CORE). It has no stable link per company: search for `company_number` there. Copies of filed documents are sold by the CRO.
+             * @example https://core.cro.ie/
+             */
+            cro_search_url: string;
+            /**
+             * Data As Of
+             * @description Date of the register data the block was read from.
+             */
+            data_as_of?: string | null;
+            /**
+             * Last Accounts Made Up To
+             * @description End of the period covered by the latest accounts filed with the CRO.
+             */
+            last_accounts_made_up_to?: string | null;
+            /**
+             * Last Annual Return On
+             * @description Date of the latest annual return filed with the CRO.
+             */
+            last_annual_return_on?: string | null;
+            /**
+             * Next Annual Return Due
+             * @description Next annual return date the CRO states for the company.
+             */
+            next_annual_return_due?: string | null;
+            /**
+             * Object
+             * @description Discriminator. Always `ie_filing_status`.
+             * @default ie_filing_status
+             * @constant
+             */
+            object: "ie_filing_status";
+            /**
+             * Register Status
+             * @description Company status as the CRO states it, e.g. `Normal`, `Strike Off Listed`, `Liquidation`, `Dissolved`.
+             * @example Normal
+             */
+            register_status?: string | null;
+            /**
+             * Register Status Date
+             * @description Date the CRO gives for the current `register_status`.
+             */
+            register_status_date?: string | null;
         };
         /**
          * IncomeStatementPositions
@@ -3950,7 +4077,7 @@ export interface components {
             case_number?: string | null;
             /**
              * Category
-             * @description Event type, in the shared German vocabulary: `Sicherungsmaßnahmen`, `Eröffnungen`, `Abweisungen mangels Masse`, `Aufhebung Sicherungsmaßnahmen`, `Aufhebung des Verfahrens`, `Auflösung durch Gesellschafterbeschluss`, `Auflösung mit Fortführung`, `Auflösung`. Swiss Official Gazette of Commerce (SHAB) notices for Swiss companies: `Konkurseröffnung`, `Einstellung mangels Aktiven`, `Schluss des Konkursverfahrens`, `Widerruf des Konkurses`, `Provisorische Nachlassstundung`, `Definitive Nachlassstundung`, `Aufhebung der Nachlassstundung`, `Bestätigung des Nachlassvertrages`, `Nachlassvertrag mit Vermögensabtretung`. Companies House insolvency cases and statuses (`companies_house`), in English: `Winding-up order`, `Creditors' voluntary liquidation`, `Members' voluntary liquidation` (solvent), `Overseas winding up`, `Winding up concluded`, `Administration`, `Administration ended`, `Company voluntary arrangement`, `Company voluntary arrangement ended`, `Receivership`, `Receivership ended`, `Moratorium`, `Moratorium ended`, `Restructuring plan`, `Proposal to strike off`.
+             * @description Event type, in the shared German vocabulary: `Sicherungsmaßnahmen`, `Eröffnungen`, `Abweisungen mangels Masse`, `Aufhebung Sicherungsmaßnahmen`, `Aufhebung des Verfahrens`, `Auflösung durch Gesellschafterbeschluss`, `Auflösung mit Fortführung`, `Auflösung`. Swiss Official Gazette of Commerce (SHAB) notices for Swiss companies: `Konkurseröffnung`, `Einstellung mangels Aktiven`, `Schluss des Konkursverfahrens`, `Widerruf des Konkurses`, `Provisorische Nachlassstundung`, `Definitive Nachlassstundung`, `Aufhebung der Nachlassstundung`, `Bestätigung des Nachlassvertrages`, `Nachlassvertrag mit Vermögensabtretung`. Companies House insolvency cases and statuses (`companies_house`), in English: `Winding-up order`, `Creditors' voluntary liquidation`, `Members' voluntary liquidation` (solvent), `Overseas winding up`, `Winding up concluded`, `Administration`, `Administration ended`, `Company voluntary arrangement`, `Company voluntary arrangement ended`, `Receivership`, `Receivership ended`, `Moratorium`, `Moratorium ended`, `Restructuring plan`, `Proposal to strike off`. The Irish Companies Registration Office (`cro`): `Proposal to strike off` (a company on the strike-off list).
              * @example Auflösung durch Gesellschafterbeschluss
              */
             category: string;
@@ -4014,9 +4141,9 @@ export interface components {
             self_administration: boolean;
             /**
              * Sources
-             * @description Register or official publication venue recording this event: the commercial register, Insolvenzbekanntmachungen, the Swiss Official Gazette of Commerce (SHAB), the Austrian Firmenbuch, or Companies House.
+             * @description Register or official publication venue recording this event: the commercial register, Insolvenzbekanntmachungen, the Swiss Official Gazette of Commerce (SHAB), the Austrian Firmenbuch, Companies House, or the Irish Companies Registration Office (CRO).
              */
-            sources?: ("si" | "cd" | "portal" | "shab" | "firmenbuch" | "companies_house")[];
+            sources?: ("si" | "cd" | "portal" | "shab" | "firmenbuch" | "companies_house" | "cro")[];
         };
         /**
          * LeiGraphBlock
@@ -4438,6 +4565,11 @@ export interface components {
              */
             date_of_birth?: string | null;
             /**
+             * Display Name
+             * @description UK officers only: the name in reading order and readable case (Companies House `MCDONALD`, `RONALD JAMES` → `Ronald James McDonald`). `first_name`, `last_name` and `full_name` keep the register spelling. Null for other countries.
+             */
+            display_name?: string | null;
+            /**
              * First Name
              * @description Given name.
              */
@@ -4466,9 +4598,14 @@ export interface components {
             object: "person";
             /**
              * Title
-             * @description Honorific or academic title (e.g. `Dr.`).
+             * @description Honorific or academic title before the name (e.g. `Dr.`).
              */
             title?: string | null;
+            /**
+             * Title After
+             * @description Academic title after the name (Austrian post-nominal degrees, e.g. `MBA`, `MSc`).
+             */
+            title_after?: string | null;
         };
         /**
          * Phone
@@ -4669,7 +4806,7 @@ export interface components {
          * Rechtsform
          * @enum {string}
          */
-        Rechtsform: "GmbH" | "KG" | "e.K." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "e.V." | "AG" | "eG" | "ausländische Rechtsform (HRB)" | "gGmbH" | "UG & Co. KG" | "ausländische Rechtsform" | "SE" | "sonstige juristische Person" | "EWIV" | "KGaA" | "Ltd. & Co. KG" | "sonstige juristische Person (HRA)" | "GmbH & Co. OHG" | "VVaG" | "SE & Co. KG" | "ausländische Rechtsform (HRA)" | "AG & Co. KG" | "ausländische Rechtsform (PR)" | "SCE" | "ausländische Rechtsform (GnR)" | "Stiftung & Co. KG" | "eG & Co. KG" | "Einzelunternehmen (CH)" | "Kollektivgesellschaft (CH)" | "Kommanditgesellschaft (CH)" | "Kommanditaktiengesellschaft (CH)" | "AG (CH)" | "GmbH (CH)" | "Genossenschaft (CH)" | "Verein (CH)" | "Stiftung (CH)" | "Zweigniederlassung ausl. Ges. (CH)" | "Besondere Rechtsform (CH)" | "KmGK (CH)" | "SICAV (CH)" | "SICAF (CH)" | "Institut des öffentlichen Rechts (CH)" | "Nichtkaufmännische Prokura (CH)" | "Gemeinderschaft (CH)" | "Zweigniederlassung (CH)" | "GmbH (AT)" | "AG (AT)" | "FlexCo (AT)" | "KG (AT)" | "OG (AT)" | "e.U. (AT)" | "Genossenschaft (AT)" | "Privatstiftung (AT)" | "Sparkasse (AT)" | "VVaG (AT)" | "SE (AT)" | "EWIV (AT)" | "Sonstiger Rechtsträger (AT)" | "OHG (AT, alt)" | "KEG (AT, alt)" | "OEG (AT, alt)" | "Einzelkaufmann (AT, alt)" | "Zweigniederlassung ausl. Ges. (AT)" | "Ltd (UK)" | "PLC (UK)" | "LLP (UK)" | "LP (UK)" | "Scottish partnership (UK)" | "CIC (UK)" | "Ltd by guarantee (UK)" | "Ltd by guarantee, name exempt (UK)" | "Ltd, name exempt (UK)" | "Unlimited company (UK)" | "Unlimited, no share capital (UK)" | "Old public company (UK)" | "CIO (UK)" | "SCIO (UK)" | "Registered society (UK)" | "Industrial and provident society (UK)" | "Royal charter company (UK)" | "ICVC (UK)" | "ICVC, securities (UK)" | "ICVC, warrant (UK)" | "ICVC, umbrella (UK)" | "United Kingdom Societas (UK)" | "SE (UK)" | "EEIG (UK)" | "EEIG establishment (UK)" | "UKEIG (UK)" | "Overseas entity (UK)" | "Overseas company (UK)" | "UK establishment (UK)" | "Northern Ireland company (UK)" | "Credit union, Northern Ireland (UK)" | "Protected cell company (UK)" | "Assurance company (UK)" | "Unregistered company (UK)" | "FE or sixth form college (UK)" | "Converted or closed (UK)" | "Other company type (UK)";
+        Rechtsform: "GmbH" | "KG" | "e.K." | "eGbR" | "UG" | "GmbH & Co. KG" | "OHG" | "PartG" | "e.V." | "AG" | "eG" | "ausländische Rechtsform (HRB)" | "gGmbH" | "UG & Co. KG" | "ausländische Rechtsform" | "SE" | "sonstige juristische Person" | "EWIV" | "KGaA" | "Ltd. & Co. KG" | "sonstige juristische Person (HRA)" | "GmbH & Co. OHG" | "VVaG" | "SE & Co. KG" | "ausländische Rechtsform (HRA)" | "AG & Co. KG" | "ausländische Rechtsform (PR)" | "SCE" | "ausländische Rechtsform (GnR)" | "Stiftung & Co. KG" | "eG & Co. KG" | "Einzelunternehmen (CH)" | "Kollektivgesellschaft (CH)" | "Kommanditgesellschaft (CH)" | "Kommanditaktiengesellschaft (CH)" | "AG (CH)" | "GmbH (CH)" | "Genossenschaft (CH)" | "Verein (CH)" | "Stiftung (CH)" | "Zweigniederlassung ausl. Ges. (CH)" | "Besondere Rechtsform (CH)" | "KmGK (CH)" | "SICAV (CH)" | "SICAF (CH)" | "Institut des öffentlichen Rechts (CH)" | "Nichtkaufmännische Prokura (CH)" | "Gemeinderschaft (CH)" | "Zweigniederlassung (CH)" | "GmbH (AT)" | "AG (AT)" | "FlexCo (AT)" | "KG (AT)" | "OG (AT)" | "e.U. (AT)" | "Genossenschaft (AT)" | "Privatstiftung (AT)" | "Sparkasse (AT)" | "VVaG (AT)" | "SE (AT)" | "EWIV (AT)" | "Sonstiger Rechtsträger (AT)" | "OHG (AT, alt)" | "KEG (AT, alt)" | "OEG (AT, alt)" | "Einzelkaufmann (AT, alt)" | "Zweigniederlassung ausl. Ges. (AT)" | "Ltd (UK)" | "PLC (UK)" | "LLP (UK)" | "LP (UK)" | "Scottish partnership (UK)" | "CIC (UK)" | "Ltd by guarantee (UK)" | "Ltd by guarantee, name exempt (UK)" | "Ltd, name exempt (UK)" | "Unlimited company (UK)" | "Unlimited, no share capital (UK)" | "Old public company (UK)" | "CIO (UK)" | "SCIO (UK)" | "Registered society (UK)" | "Industrial and provident society (UK)" | "Royal charter company (UK)" | "ICVC (UK)" | "ICVC, securities (UK)" | "ICVC, warrant (UK)" | "ICVC, umbrella (UK)" | "United Kingdom Societas (UK)" | "SE (UK)" | "EEIG (UK)" | "EEIG establishment (UK)" | "UKEIG (UK)" | "Overseas entity (UK)" | "Overseas company (UK)" | "UK establishment (UK)" | "Northern Ireland company (UK)" | "Credit union, Northern Ireland (UK)" | "Protected cell company (UK)" | "Assurance company (UK)" | "Unregistered company (UK)" | "FE or sixth form college (UK)" | "Converted or closed (UK)" | "Other company type (UK)" | "Private company limited by shares (IE)" | "DAC, limited by shares (IE)" | "DAC, limited by guarantee (IE)" | "CLG (IE)" | "PLC (IE)" | "Investment company (IE)" | "Private unlimited company (IE)" | "PUC (IE)" | "PULC (IE)" | "UCITS (IE)" | "External company (IE)" | "EEIG (IE)" | "SE (IE)" | "Inward migrating company (IE)";
         /**
          * RegisterCourt
          * @enum {string}
@@ -4679,7 +4816,7 @@ export interface components {
          * RegisterType
          * @enum {string}
          */
-        RegisterType: "HRA" | "HRB" | "GnR" | "PR" | "VR" | "GsR" | "CH-HR" | "AT-FB" | "GB-CR";
+        RegisterType: "HRA" | "HRB" | "GnR" | "PR" | "VR" | "GsR" | "CH-HR" | "AT-FB" | "GB-CR" | "IE-CRO";
         /**
          * RelatedCompany
          * @description Reference to a related company (parent or subsidiary).
@@ -4782,7 +4919,7 @@ export interface components {
              * @description Country of the register the company is entered in: `DE` for the German registers (Handelsregister, Genossenschafts-, Partnerschafts-, Vereinsregister), `CH` for the Swiss commercial register, `AT` for the Austrian Firmenbuch, `GB` for the UK Companies House register.
              * @enum {string}
              */
-            country_code: "DE" | "CH" | "AT" | "GB";
+            country_code: "DE" | "CH" | "AT" | "GB" | "IE";
             /**
              * Cpv Award Codes
              * @description CPV (Common Procurement Vocabulary) codes from public-procurement awards.
@@ -4790,7 +4927,7 @@ export interface components {
             cpv_award_codes?: string[];
             /**
              * Display Name
-             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). Identical for the same company on every endpoint.
+             * @description The legal name without its legal-form suffix and status markers (`VOLKSWAGEN AKTIENGESELLSCHAFT` → `VOLKSWAGEN`, `Siemens Suisse SA` → `Siemens Suisse`). UK (`GB`) names, which Companies House registers in upper case, come in readable case (`TESCO PLC` → `Tesco plc`, `ASTRAZENECA PLC` → `AstraZeneca plc`); `legal_name` keeps the register spelling. Identical for the same company on every endpoint.
              */
             display_name: string;
             /**
@@ -5035,7 +5172,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description Coverage status. `available`: cap table available and returned; `not_applicable`: legal form does not file a Gesellschafterliste, or the company is Austrian (no shareholder data yet), or British (no UK register publishes a shareholder list; persons with significant control are on the UBO endpoint); `not_filed`: filing expected but not yet received; `token_limit_reached`: filing too large to process.
+             * @description Coverage status. `available`: cap table available and returned; `not_applicable`: legal form does not file a Gesellschafterliste, or the company is Austrian (no shareholder data yet), or Irish (the CRO publishes no shareholder list as open data), or British (no UK register publishes a shareholder list; persons with significant control are on the UBO endpoint); `not_filed`: filing expected but not yet received; `token_limit_reached`: filing too large to process.
              * @default not_filed
              * @enum {string}
              */
@@ -5830,7 +5967,7 @@ export interface components {
             reason?: string | null;
             /**
              * Status
-             * @description Coverage status. `available`: chain fully resolved to natural persons, or German unresolved branches sum to ≤25 % effective share and cannot hide a beneficial owner. For UK companies, all control branches must be resolved with no protected or unidentified person with significant control. `partial`: an unresolved branch could hide a beneficial owner, or a UK person with significant control is protected or unidentified; `not_applicable`: legal form does not file a Gesellschafterliste, the company is Austrian (no shareholder data yet), or a UK company is exempt from keeping a register of persons with significant control; `not_filed`: filing expected but not yet received (for a UK company: no current person with significant control on file).
+             * @description Coverage status. `available`: chain fully resolved to natural persons, or German unresolved branches sum to ≤25 % effective share and cannot hide a beneficial owner. For UK companies, all control branches must be resolved with no protected or unidentified person with significant control. `partial`: an unresolved branch could hide a beneficial owner, or a UK person with significant control is protected or unidentified; `not_applicable`: legal form does not file a Gesellschafterliste, the company is Austrian (no shareholder data yet), or Irish (the beneficial-ownership register is closed to the public), or a UK company is exempt from keeping a register of persons with significant control; `not_filed`: filing expected but not yet received (for a UK company: no current person with significant control on file).
              * @default not_filed
              * @enum {string}
              */
@@ -6374,7 +6511,7 @@ export interface operations {
                 /** @description Maximum number of suggestions to return. Hard upper bound is 25. */
                 limit?: number;
                 /** @description Restrict all suggestions to the company register: DE, CH, AT or GB. Case-insensitive; omitted searches all countries. */
-                country?: ("DE" | "CH" | "AT" | "GB") | null;
+                country?: ("DE" | "CH" | "AT" | "GB" | "IE") | null;
                 /** @description When `true`, search the German company registers live for the keyword and include any companies not yet known to firmendata, so newly founded companies appear in the suggestions of this same response. Not run when `country` is set to a country other than DE. Adds upstream latency (typically a few seconds) and a higher credit cost. Refresh failures never fail the request — `freshness.realtime_fetching_status` reports the outcome and the local suggestions are returned regardless. */
                 fetch_realtime?: boolean;
             };
